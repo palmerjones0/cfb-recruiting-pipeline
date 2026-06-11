@@ -119,6 +119,29 @@
     .mode-btn.active { background: #21262d; color: #f0f6fc; }
     .mode-btn:hover:not(.active) { color: #c9d1d9; }
 
+    .arc-filter {
+      display: flex;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      overflow: hidden;
+      flex-shrink: 0;
+    }
+    .arc-filter.hidden { display: none; }
+    .arc-filter-btn {
+      padding: 5px 9px;
+      font-size: 11px;
+      cursor: pointer;
+      background: none;
+      border: none;
+      color: #8b949e;
+      font-family: inherit;
+      transition: background 0.12s, color 0.12s;
+      white-space: nowrap;
+    }
+    .arc-filter-btn + .arc-filter-btn { border-left: 1px solid #30363d; }
+    .arc-filter-btn.active { background: #21262d; color: #f0f6fc; }
+    .arc-filter-btn:hover:not(.active) { color: #c9d1d9; }
+
     #about-btn {
       background: none;
       border: 1px solid #30363d;
@@ -215,6 +238,8 @@
       stroke-width: 1.5;
     }
     .school-hit { pointer-events: all; }
+    .school-hit.pm-inactive { pointer-events: none; }
+    .recruit-dot.hollow { fill: none; stroke-width: 1.2; }
 
     .recruit-arc { fill: none; pointer-events: stroke; cursor: pointer; }
     .recruit-arc:hover { opacity: 1 !important; stroke-width: 2 !important; }
@@ -533,6 +558,11 @@
     <button class="mode-btn active" id="btn-school">School</button>
     <button class="mode-btn" id="btn-player">Player</button>
   </div>
+  <div class="arc-filter" id="arc-filter">
+    <button class="arc-filter-btn active" data-filter="all">All</button>
+    <button class="arc-filter-btn" data-filter="committed">Committed</button>
+    <button class="arc-filter-btn" data-filter="offered">Offered</button>
+  </div>
   <button id="about-btn">About</button>
 </div>
 
@@ -639,7 +669,7 @@
 "use strict";
 
 // ── Constants ─────────────────────────────────────────────
-const DATA_BASE = "https://cdn.jsdelivr.net/gh/palmerjones0/cfb-recruiting-pipeline@v1.0.0/public";
+const DATA_BASE = "https://cdn.jsdelivr.net/gh/palmerjones0/cfb-recruiting-pipeline@v1.1.0/public";
 const FEEDBACK_WORKER = "https://cfb-feedback-worker.palmer-da0.workers.dev";
 
 const PIPELINE_YEARS = [2026, 2027, 2028];
@@ -670,9 +700,11 @@ let selectedYear = "all";
 let selectedState = null;
 let selectedPlayer = null;
 let playersTab = "commits";
+let arcFilter = "all"; // "all" | "committed" | "offered"
 
 // Data
 let allPlayers = [];
+let pipelinePlayers = []; // deduplicated 2026-2028 offer recruits for player mode
 let schoolMap = {};
 let schoolsList = [];
 let playerOffers = {};
@@ -843,8 +875,8 @@ async function loadSchoolOffers(school) {
 function computeStateHeat(year) {
   const counts = {};
   const yNum = parseInt(year);
-  const players = allPlayers.filter(p =>
-    p.committed_to === null && (isNaN(yNum) ? PIPELINE_YEARS.includes(p.year) : p.year === yNum)
+  const players = pipelinePlayers.filter(p =>
+    isNaN(yNum) ? PIPELINE_YEARS.includes(p.year) : p.year === yNum
   );
   players.forEach(p => {
     if (!p.hometown_state) return;
@@ -917,26 +949,30 @@ async function drawArcs(school, year) {
   const dotLayer = arcLayer.append("g");
 
   const arcW = Math.max(0.3, 1.0 / Math.sqrt(Math.max(commits.length, 15) / 15));
+  const solidW = arcW * 1.1;
+  const dashedW = arcW * 0.72;
   let delay = 0;
 
-  // Committed arcs (solid)
-  commits.forEach((r, i) => {
-    const homePt = projection([r.lng, r.lat]);
-    if (!homePt) return;
-    const color = STAR_COLOR[r.stars] || STAR_COLOR[0];
-    const arc = drawAnimatedArc(solidLayer, homePt[0], homePt[1], schoolPt[0], schoolPt[1],
-      color, arcW, 0.55, null, Math.min(i * 4, 500));
-    arc.on("mousemove", ev => { showTooltip(ev, recruitTooltipHtml(r)); moveTooltip(ev); })
-       .on("touchmove", ev => { showTooltip(ev, recruitTooltipHtml(r)); moveTooltip(ev); ev.preventDefault(); })
-       .on("mouseleave touchend", hideTooltip);
-    dotLayer.append("circle").attr("class", "recruit-dot")
-      .attr("cx", homePt[0]).attr("cy", homePt[1]).attr("r", recruitDotRadius(r.stars))
-      .attr("fill", color).attr("opacity", 0.65)
-      .on("mousemove", ev => { showTooltip(ev, recruitTooltipHtml(r)); moveTooltip(ev); })
-      .on("touchmove", ev => { showTooltip(ev, recruitTooltipHtml(r)); moveTooltip(ev); ev.preventDefault(); })
-      .on("mouseleave touchend", hideTooltip);
-    delay = Math.min(i * 4, 500);
-  });
+  // Committed arcs (solid) — skip if filter is "offered"
+  if (arcFilter !== "offered") {
+    commits.forEach((r, i) => {
+      const homePt = projection([r.lng, r.lat]);
+      if (!homePt) return;
+      const color = STAR_COLOR[r.stars] || STAR_COLOR[0];
+      const arc = drawAnimatedArc(solidLayer, homePt[0], homePt[1], schoolPt[0], schoolPt[1],
+        color, solidW, 0.55, null, Math.min(i * 4, 500));
+      arc.on("mousemove", ev => { showTooltip(ev, recruitTooltipHtml(r)); moveTooltip(ev); })
+         .on("touchmove", ev => { showTooltip(ev, recruitTooltipHtml(r)); moveTooltip(ev); ev.preventDefault(); })
+         .on("mouseleave touchend", hideTooltip);
+      dotLayer.append("circle").attr("class", "recruit-dot")
+        .attr("cx", homePt[0]).attr("cy", homePt[1]).attr("r", recruitDotRadius(r.stars))
+        .attr("fill", color).attr("opacity", 0.65)
+        .on("mousemove", ev => { showTooltip(ev, recruitTooltipHtml(r)); moveTooltip(ev); })
+        .on("touchmove", ev => { showTooltip(ev, recruitTooltipHtml(r)); moveTooltip(ev); ev.preventDefault(); })
+        .on("mouseleave touchend", hideTooltip);
+      delay = Math.min(i * 4, 500);
+    });
+  }
 
   // Update school bar counts (commits only for now, pipeline filled after load)
   updateSchoolBar(school, commits.length, null, null);
@@ -952,31 +988,35 @@ async function drawArcs(school, year) {
     const targets = yearOffers.filter(o => o.committed_to === null);
     const lost = yearOffers.filter(o => o.committed_to !== null && o.committed_to !== school.id);
 
-    targets.forEach((r, i) => {
-      const homePt = projection([r.lng, r.lat]);
-      if (!homePt) return;
-      const color = STAR_COLOR[r.stars] || STAR_COLOR[0];
-      const arc = drawAnimatedArc(dashedLayer, homePt[0], homePt[1], schoolPt[0], schoolPt[1],
-        color, arcW * 0.8, 0.60, "5,4", Math.min(delay + i * 3, 800));
-      arc.on("mousemove", ev => {
-           showTooltip(ev, recruitTooltipHtml(r) + `<br><em style="color:#8b949e">Uncommitted target</em>`);
-           moveTooltip(ev);
-         })
-         .on("touchmove", ev => { showTooltip(ev, recruitTooltipHtml(r)); moveTooltip(ev); ev.preventDefault(); })
-         .on("mouseleave touchend", hideTooltip);
-      dotLayer.append("circle").attr("class", "recruit-dot")
-        .attr("cx", homePt[0]).attr("cy", homePt[1]).attr("r", recruitDotRadius(r.stars))
-        .attr("fill", color).attr("opacity", 0.50)
-        .on("mousemove", ev => { showTooltip(ev, recruitTooltipHtml(r)); moveTooltip(ev); })
-        .on("mouseleave touchend", hideTooltip);
-    });
+    if (arcFilter !== "committed") {
+      targets.forEach((r, i) => {
+        const homePt = projection([r.lng, r.lat]);
+        if (!homePt) return;
+        const color = STAR_COLOR[r.stars] || STAR_COLOR[0];
+        const arc = drawAnimatedArc(dashedLayer, homePt[0], homePt[1], schoolPt[0], schoolPt[1],
+          color, dashedW, 0.60, "5,4", Math.min(delay + i * 3, 800));
+        arc.on("mousemove", ev => {
+             showTooltip(ev, recruitTooltipHtml(r) + `<br><em style="color:#8b949e">Uncommitted target</em>`);
+             moveTooltip(ev);
+           })
+           .on("touchmove", ev => { showTooltip(ev, recruitTooltipHtml(r)); moveTooltip(ev); ev.preventDefault(); })
+           .on("mouseleave touchend", hideTooltip);
+        dotLayer.append("circle").attr("class", "recruit-dot hollow")
+          .attr("cx", homePt[0]).attr("cy", homePt[1]).attr("r", recruitDotRadius(r.stars))
+          .attr("fill", "none").attr("stroke", color).attr("opacity", 0.65)
+          .on("mousemove", ev => { showTooltip(ev, recruitTooltipHtml(r)); moveTooltip(ev); })
+          .on("mouseleave touchend", hideTooltip);
+      });
+    }
 
-    lost.forEach((r, i) => {
-      const homePt = projection([r.lng, r.lat]);
-      if (!homePt) return;
-      drawAnimatedArc(hairlineLayer, homePt[0], homePt[1], schoolPt[0], schoolPt[1],
-        "#484f58", 0.4, 0.20, "3,5", Math.min(delay + targets.length * 3 + i * 2, 1000));
-    });
+    if (arcFilter === "all") {
+      lost.forEach((r, i) => {
+        const homePt = projection([r.lng, r.lat]);
+        if (!homePt) return;
+        drawAnimatedArc(hairlineLayer, homePt[0], homePt[1], schoolPt[0], schoolPt[1],
+          "#484f58", 0.4, 0.20, "3,5", Math.min(delay + targets.length * 3 + i * 2, 1000));
+      });
+    }
 
     updateSchoolBar(school, commits.length, targets.length, lost.length);
 
@@ -1096,26 +1136,26 @@ function openStatePanel(stateName) {
 
   let players;
   if (validYear) {
-    players = allPlayers.filter(p => p.committed_to === null && p.year === yearNum && p.hometown_state === abbrev);
+    players = pipelinePlayers.filter(p => p.year === yearNum && p.hometown_state === abbrev);
   } else {
-    // For "all" or non-pipeline year, show all uncommitted across pipeline years
-    players = allPlayers.filter(p => p.committed_to === null && PIPELINE_YEARS.includes(p.year) && p.hometown_state === abbrev);
+    players = pipelinePlayers.filter(p => PIPELINE_YEARS.includes(p.year) && p.hometown_state === abbrev);
   }
   players.sort((a, b) => (b.stars || 0) - (a.stars || 0) || (a.ranking || 9999) - (b.ranking || 9999));
 
   const yearLabel = validYear ? `${yearNum} Class` : "All Pipeline Years";
-  playersTitle.textContent = `${stateName} · ${players.length} uncommitted (${yearLabel})`;
+  playersTitle.textContent = `${stateName} · ${players.length} prospect${players.length !== 1 ? "s" : ""} (${yearLabel})`;
 
   playersList.innerHTML = players.length === 0
-    ? `<div class="player-row"><span style="color:#8b949e;font-size:12px">No uncommitted recruits found for this state/year.</span></div>`
+    ? `<div class="player-row"><span style="color:#8b949e;font-size:12px">No recruits found for this state/year.</span></div>`
     : players.map(r => {
       const color = STAR_COLOR[r.stars] || STAR_COLOR[0];
       const offerCount = playerOffers[`${r.name}|${r.year}`]?.length ?? null;
+      const committed = r.committed_to ? `<span class="player-commit">→ ${r.committed_to}</span>` : "";
       return `<div class="player-row tappable" data-name="${encodeURIComponent(r.name)}" data-year="${r.year}">
-        <div class="player-star-dot" style="background:${color}"></div>
+        <div class="player-star-dot" style="${r.committed_to ? `background:${color}` : `background:none;border:2px solid ${color};border-radius:50%`}"></div>
         <div class="player-name-pos"><span class="player-name">${r.name}</span><span class="player-pos">${r.position}</span></div>
         <div class="player-hometown">${r.hometown_city}, ${r.hometown_state}</div>
-        <span class="player-year">${offerCount !== null ? `${offerCount} offers` : r.year}</span>
+        ${committed || `<span class="player-year">${offerCount !== null ? `${offerCount} offers` : r.year}</span>`}
       </div>`;
     }).join("");
 
@@ -1124,7 +1164,8 @@ function openStatePanel(stateName) {
     el.addEventListener("click", () => {
       const name = decodeURIComponent(el.dataset.name);
       const year = parseInt(el.dataset.year);
-      const player = players.find(p => p.name === name && p.year === year);
+      const player = players.find(p => p.name === name && p.year === year)
+        || pipelinePlayers.find(p => p.name === name && p.year === year);
       if (player) openPlayerArcs(player);
     });
   });
@@ -1254,6 +1295,7 @@ function enterSchoolMode() {
   document.getElementById("btn-player").classList.remove("active");
 
   searchWrap.style.display = "";
+  document.getElementById("arc-filter").classList.remove("hidden");
   hint.textContent = "Click a school dot or search to explore";
   legendPipeline.style.display = "none";
   legendLost.style.display = "none";
@@ -1264,8 +1306,9 @@ function enterSchoolMode() {
     .classed("pm-selected", false)
     .attr("fill", "#161b22");
 
-  // Restore school dots
+  // Restore school dots and hit circles
   schoolLayer.selectAll("circle.school-dot").attr("class", "school-dot");
+  schoolLayer.selectAll("circle.school-hit").classed("pm-inactive", false);
 
   // Rebuild year select for school mode
   rebuildYearSelect();
@@ -1287,14 +1330,17 @@ function enterPlayerMode() {
   document.getElementById("btn-school").classList.remove("active");
 
   searchWrap.style.display = "none";
+  document.getElementById("arc-filter").classList.add("hidden");
   schoolBar.classList.remove("visible");
   legendPipeline.style.display = "none";
   legendLost.style.display = "none";
   clearArcs();
 
-  // Make state paths interactive
+  // Make state paths interactive; disable school hit circles so they don't block state clicks
   stateLayer.selectAll("path.state-hit")
     .classed("pm-interactive", true);
+  schoolLayer.selectAll("circle.school-hit")
+    .classed("pm-inactive", true);
 
   // Dim school dots
   applyPlayerModeDots("dimmed");
@@ -1313,13 +1359,15 @@ function rebuildYearSelect() {
     const opt0 = document.createElement("option");
     opt0.value = "all"; opt0.textContent = "All Years";
     yearSelect.appendChild(opt0);
-    allYears.forEach(y => {
+    // Always include all years from data + all pipeline years
+    const schoolYears = [...new Set([...allYears, ...PIPELINE_YEARS])].sort((a, b) => b - a);
+    schoolYears.forEach(y => {
       const opt = document.createElement("option");
       opt.value = y; opt.textContent = `${y} Class`;
       yearSelect.appendChild(opt);
     });
-    yearSelect.value = selectedYear !== "all" && allYears.includes(+selectedYear)
-      ? selectedYear : (allYears[0] || "all");
+    yearSelect.value = selectedYear !== "all" && schoolYears.includes(+selectedYear)
+      ? selectedYear : (schoolYears[0] || "all");
     selectedYear = yearSelect.value;
   } else {
     PIPELINE_YEARS.forEach(y => {
@@ -1474,8 +1522,10 @@ Promise.all([
   d3.json(`${DATA_BASE}/players.json`),
   d3.json(`${DATA_BASE}/player_offers.json`).catch(() => ({})),
   d3.json(`${DATA_BASE}/us-states.topojson`),
-]).then(([schools, players, pOffers, us]) => {
+  d3.json(`${DATA_BASE}/pipeline_players.json`).catch(() => []),
+]).then(([schools, players, pOffers, us, ppPlayers]) => {
   allPlayers = players;
+  pipelinePlayers = ppPlayers || [];
   schoolsList = schools;
   playerOffers = pOffers || {};
   schools.forEach(s => { schoolMap[s.id] = s; });
@@ -1514,9 +1564,9 @@ Promise.all([
       if (mode !== "player") return;
       const abbrev = STATE_NAME_TO_ABBREV[d.properties.name];
       const count = stateHeat[abbrev]
-        ? allPlayers.filter(p => p.committed_to === null && p.hometown_state === abbrev && (parseInt(selectedYear) ? p.year === parseInt(selectedYear) : PIPELINE_YEARS.includes(p.year))).length
+        ? pipelinePlayers.filter(p => p.hometown_state === abbrev && (parseInt(selectedYear) ? p.year === parseInt(selectedYear) : PIPELINE_YEARS.includes(p.year))).length
         : 0;
-      if (count > 0) showTooltip(ev, `<strong>${d.properties.name}</strong><br>${count} uncommitted recruit${count !== 1 ? "s" : ""}`);
+      if (count > 0) showTooltip(ev, `<strong>${d.properties.name}</strong><br>${count} recruit${count !== 1 ? "s" : ""}`);
     })
     .on("mouseleave", hideTooltip);
 
@@ -1572,6 +1622,15 @@ Promise.all([
   // Mode buttons
   document.getElementById("btn-school").addEventListener("click", enterSchoolMode);
   document.getElementById("btn-player").addEventListener("click", enterPlayerMode);
+
+  // Arc filter toggle
+  document.querySelectorAll(".arc-filter-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      arcFilter = btn.dataset.filter;
+      document.querySelectorAll(".arc-filter-btn").forEach(b => b.classList.toggle("active", b.dataset.filter === arcFilter));
+      if (mode === "school" && selectedSchool) drawArcs(selectedSchool, selectedYear);
+    });
+  });
 
   // Players panel
   document.getElementById("players-close").addEventListener("click", closePanel);

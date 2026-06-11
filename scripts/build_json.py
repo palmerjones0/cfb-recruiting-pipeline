@@ -210,8 +210,9 @@ def load_offer_files() -> dict:
 def build_offer_files(schools: list, players: list) -> tuple:
     """
     Write public/offers/{slug}.json for each school.
-    Returns (files_written, player_offers_map).
+    Returns (files_written, player_offers_map, pipeline_player_records).
     player_offers_map: {"name|year": ["School1", ...]}
+    pipeline_player_records: deduplicated list of offer records (one per unique name+year)
     """
     player_lookup = build_player_lookup(players)
     slug_to_name = {s["slug_247"]: s["name"] for s in schools}
@@ -219,14 +220,15 @@ def build_offer_files(schools: list, players: list) -> tuple:
     offer_data = load_offer_files()
     if not offer_data:
         print("WARN: no offer files found in data/offers_raw/ — skipping offer output")
-        return 0, {}
+        return 0, {}, []
 
     player_offers = {}
+    pipeline_seen = {}  # (normalized_name, year) -> offer_rec (first occurrence wins)
     files_written = 0
 
     for slug, years_data in offer_data.items():
         school_name = slug_to_name.get(slug, slug)
-        output: dict[str, list[dict]] = {}
+        output = {}
 
         for year, records in sorted(years_data.items()):
             year_offers = []
@@ -269,6 +271,10 @@ def build_offer_files(schools: list, players: list) -> tuple:
                 }
                 year_offers.append(offer_rec)
 
+                # Deduplicate for pipeline_players.json (first school encountered wins)
+                if key not in pipeline_seen:
+                    pipeline_seen[key] = offer_rec
+
                 # Accumulate player_offers map
                 po_key = f"{raw_name}|{year}"
                 player_offers.setdefault(po_key, [])
@@ -282,17 +288,24 @@ def build_offer_files(schools: list, players: list) -> tuple:
         files_written += 1
 
     print(f"offers/{{slug}}.json: {files_written} files written")
-    return files_written, player_offers
+    pipeline_records = sorted(pipeline_seen.values(), key=lambda p: (p["year"], -(p["stars"] or 0)))
+    return files_written, player_offers, pipeline_records
 
 
 # ---------------------------------------------------------------------------
-# Step 4 — Build player_offers.json
+# Step 4 — Build player_offers.json + pipeline_players.json
 # ---------------------------------------------------------------------------
 
 def build_player_offers(player_offers: dict) -> None:
     out_path = PUBLIC_DIR / "player_offers.json"
     out_path.write_text(json.dumps(player_offers, separators=(",", ":")))
     print(f"player_offers.json: {len(player_offers)} entries written")
+
+
+def build_pipeline_players(pipeline_records: list) -> None:
+    out_path = PUBLIC_DIR / "pipeline_players.json"
+    out_path.write_text(json.dumps(pipeline_records, separators=(",", ":")))
+    print(f"pipeline_players.json: {len(pipeline_records)} unique players written")
 
 
 # ---------------------------------------------------------------------------
@@ -308,10 +321,11 @@ def main():
     players = build_players(valid_school_ids)
 
     print("\n=== Step 3: offers/{slug}.json ===")
-    files_written, player_offers = build_offer_files(schools, players)
+    files_written, player_offers, pipeline_records = build_offer_files(schools, players)
 
-    print("\n=== Step 4: player_offers.json ===")
+    print("\n=== Step 4: player_offers.json + pipeline_players.json ===")
     build_player_offers(player_offers)
+    build_pipeline_players(pipeline_records)
 
     print("\n=== Done ===")
 
