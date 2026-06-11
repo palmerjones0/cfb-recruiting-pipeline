@@ -669,7 +669,7 @@
 "use strict";
 
 // ── Constants ─────────────────────────────────────────────
-const DATA_BASE = "https://cdn.jsdelivr.net/gh/palmerjones0/cfb-recruiting-pipeline@v1.1.0/public";
+const DATA_BASE = "https://cdn.jsdelivr.net/gh/palmerjones0/cfb-recruiting-pipeline@v1.2.0/public";
 const FEEDBACK_WORKER = "https://cfb-feedback-worker.palmer-da0.workers.dev";
 
 const PIPELINE_YEARS = [2026, 2027, 2028];
@@ -943,7 +943,6 @@ async function drawArcs(school, year) {
   let commits = allPlayers.filter(r => r.school_id === school.id);
   if (year !== "all") commits = commits.filter(r => r.year === yearNum);
 
-  const hairlineLayer = arcLayer.append("g");
   const dashedLayer = arcLayer.append("g");
   const solidLayer = arcLayer.append("g");
   const dotLayer = arcLayer.append("g");
@@ -980,7 +979,6 @@ async function drawArcs(school, year) {
   // Pipeline arcs: load offers, then draw
   if (isPipeline) {
     legendPipeline.style.display = "";
-    legendLost.style.display = "";
     const offerData = await loadSchoolOffers(school);
     stateLoadedOffers = offerData;
     const yearOffers = offerData?.[String(yearNum)] ?? [];
@@ -1009,16 +1007,8 @@ async function drawArcs(school, year) {
       });
     }
 
-    if (arcFilter === "all") {
-      lost.forEach((r, i) => {
-        const homePt = projection([r.lng, r.lat]);
-        if (!homePt) return;
-        drawAnimatedArc(hairlineLayer, homePt[0], homePt[1], schoolPt[0], schoolPt[1],
-          "#484f58", 0.4, 0.20, "3,5", Math.min(delay + targets.length * 3 + i * 2, 1000));
-      });
-    }
 
-    updateSchoolBar(school, commits.length, targets.length, lost.length);
+    updateSchoolBar(school, commits.length, targets.length, null);
 
     // Zoom to fit all points
     const allPts = [
@@ -1036,11 +1026,10 @@ async function drawArcs(school, year) {
   }
 }
 
-function updateSchoolBar(school, commitCount, targetCount, lostCount) {
+function updateSchoolBar(school, commitCount, targetCount, _lostCount) {
   schoolBarName.textContent = school.name;
   let countStr = `${commitCount} commit${commitCount !== 1 ? "s" : ""}`;
   if (targetCount !== null) countStr += ` · ${targetCount} target${targetCount !== 1 ? "s" : ""}`;
-  if (lostCount !== null) countStr += ` · ${lostCount} lost`;
   countStr += " ▸";
   schoolBarCounts.textContent = countStr;
   schoolBar.classList.add("visible");
@@ -1558,6 +1547,7 @@ Promise.all([
     .attr("cursor", "default")
     .on("click", (ev, d) => {
       if (mode !== "player") return;
+      ev.stopPropagation();
       openStatePanel(d.properties.name);
     })
     .on("mousemove", (ev, d) => {
