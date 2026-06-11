@@ -2,6 +2,37 @@
 school_slugs.py — 247Sports URL slug utilities for CFB school names.
 """
 
+# Maps 247Sports display names (alt text on status imgs) → CFBD school names.
+# Only needed for schools whose 247Sports name differs from the CFBD name.
+NAME_247_TO_CFBD = {
+    "Ole Miss": "Mississippi",
+    "LSU": "Louisiana State",
+    "TCU": "Texas Christian",
+    "USC": "Southern California",
+    "UConn": "Connecticut",
+    "UNLV": "Nevada, Las Vegas",
+    "UMass": "Massachusetts",
+    "FIU": "Florida International",
+    "UTSA": "Texas-San Antonio",
+    "UTEP": "Texas-El Paso",
+    "NC State": "North Carolina State",
+    "Southern Miss": "Southern Mississippi",
+    "Miami (OH)": "Miami (OH)",
+    "Southern U": "Southern",
+    "Texas A&M": "Texas A&M",
+    "Hawai'i": "Hawaii",
+    "App State": "Appalachian State",
+    "BGSU": "Bowling Green",
+    "NIU": "Northern Illinois",
+    "WKU": "Western Kentucky",
+    "FAU": "Florida Atlantic",
+    "FIU": "Florida International",
+    "UCF": "UCF",
+    "USF": "South Florida",
+    "UAB": "UAB",
+}
+
+
 SLUG_OVERRIDES = {
     "Mississippi": "ole-miss",
     "Nevada, Las Vegas": "unlv",

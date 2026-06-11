@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from school_slugs import make_slug
+from school_slugs import make_slug, NAME_247_TO_CFBD
 
 # State centroids as fallback when a player isn't in CFBD yet
 STATE_CENTROIDS = {
@@ -251,13 +251,17 @@ def build_offer_files(schools: list, players: list) -> tuple:
                     hometown_state = state_abbrev
                     stars = None  # No CFBD rating available
 
+                # Normalize 247Sports school name to CFBD name for consistent comparison
+                committed_247 = rec.get("committed_to")
+                committed_cfbd = NAME_247_TO_CFBD.get(committed_247, committed_247) if committed_247 else None
+
                 offer_rec = {
                     "name": raw_name,
                     "year": year,
                     "position": rec.get("position", ""),
                     "stars": stars,
                     "rating_247": rec.get("rating_247"),
-                    "committed_to": rec.get("committed_to"),
+                    "committed_to": committed_cfbd,
                     "lat": lat,
                     "lng": lng,
                     "hometown_city": hometown_city,
