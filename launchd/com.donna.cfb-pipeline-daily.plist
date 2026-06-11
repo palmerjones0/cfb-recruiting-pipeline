@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.donna.cfb-pipeline-daily</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/palmerjonesadmin/cfb-recruiting-pipeline/scripts/sync.sh</string>
+    </array>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>4</integer>
+        <key>Minute</key>
+        <integer>15</integer>
+    </dict>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/palmerjonesadmin/cfb-recruiting-pipeline</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/palmerjonesadmin/cfb-recruiting-pipeline/logs/daily.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/palmerjonesadmin/cfb-recruiting-pipeline/logs/daily-error.log</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>

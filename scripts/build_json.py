@@ -1,0 +1,280 @@
+"""
+build_json.py — Build public/ output files from raw data.
+
+Usage:
+    python scripts/build_json.py
+"""
+
+import json
+import re
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+from school_slugs import make_slug
+
+RAW_DIR = Path("data/raw")
+OFFERS_DIR = Path("data/offers_raw")
+PUBLIC_DIR = Path("public")
+PUBLIC_OFFERS_DIR = PUBLIC_DIR / "offers"
+
+PUBLIC_DIR.mkdir(parents=True, exist_ok=True)
+PUBLIC_OFFERS_DIR.mkdir(parents=True, exist_ok=True)
+
+RECRUIT_YEARS = range(2015, 2029)
+OFFER_YEARS = [2026, 2027, 2028]
+
+LOCATION_OVERRIDES = {
+    "Northwestern": (42.0587, -87.6777),
+    "Florida International": (25.7562, -80.3742),
+}
+
+US_COUNTRY_VALUES = {"", "USA", "US", None}
+
+
+# ---------------------------------------------------------------------------
+# Step 1 — Build schools.json
+# ---------------------------------------------------------------------------
+
+def build_schools() -> list:
+    schools_path = RAW_DIR / "schools_raw.json"
+    if not schools_path.exists():
+        print("WARN: data/raw/schools_raw.json not found — skipping schools")
+        return []
+
+    raw = json.loads(schools_path.read_text())
+    schools = []
+
+    for s in raw:
+        name = s.get("school") or s.get("name", "")
+        if not name:
+            continue
+
+        abbrev = s.get("abbreviation", "")
+        conference = s.get("conference", "")
+
+        # Lat/lng — check location override first, then API fields
+        if name in LOCATION_OVERRIDES:
+            lat, lng = LOCATION_OVERRIDES[name]
+        else:
+            location = s.get("location") or {}
+            lat = location.get("latitude") or s.get("latitude")
+            lng = location.get("longitude") or s.get("longitude")
+
+        schools.append({
+            "id": name,
+            "name": name,
+            "abbreviation": abbrev,
+            "conference": conference,
+            "lat": lat,
+            "lng": lng,
+            "slug_247": make_slug(name),
+        })
+
+    schools.sort(key=lambda x: x["name"])
+    (PUBLIC_DIR / "schools.json").write_text(json.dumps(schools, separators=(",", ":")))
+    print(f"schools.json: {len(schools)} schools written")
+    return schools
+
+
+# ---------------------------------------------------------------------------
+# Step 2 — Build players.json
+# ---------------------------------------------------------------------------
+
+def normalize_country(country) -> str:
+    return (country or "").strip().upper()
+
+
+def is_us_recruit(recruit: dict) -> bool:
+    country = normalize_country(recruit.get("country"))
+    return country in {"", "USA", "US"}
+
+
+def get_latlon(recruit: dict) -> tuple:
+    hometown = recruit.get("hometownInfo") or {}
+    lat = hometown.get("latitude")
+    lng = hometown.get("longitude")
+    return lat, lng
+
+
+def build_players(valid_school_ids: set) -> list:
+    players = []
+    year_counts = {}
+
+    for year in RECRUIT_YEARS:
+        path = RAW_DIR / f"recruits_{year}.json"
+        if not path.exists():
+            print(f"WARN: recruits_{year}.json not found — skipping {year}")
+            continue
+
+        raw = json.loads(path.read_text())
+        count = 0
+
+        for r in raw:
+            if not is_us_recruit(r):
+                continue
+
+            lat, lng = get_latlon(r)
+            if lat is None or lng is None:
+                continue
+
+            committed_to = r.get("committedTo") or None
+
+            # 2015–2025: only include committed recruits with a valid school
+            if year <= 2025:
+                if not committed_to or committed_to not in valid_school_ids:
+                    continue
+
+            players.append({
+                "name": r.get("name", ""),
+                "school_id": committed_to,
+                "position": r.get("position", ""),
+                "stars": r.get("stars"),
+                "rating": r.get("rating"),
+                "year": year,
+                "committed_to": committed_to,
+                "lat": lat,
+                "lng": lng,
+                "hometown_city": r.get("city", ""),
+                "hometown_state": r.get("stateProvince", ""),
+            })
+            count += 1
+
+        year_counts[year] = count
+
+    (PUBLIC_DIR / "players.json").write_text(json.dumps(players, separators=(",", ":")))
+    total = sum(year_counts.values())
+    print(f"players.json: {total} recruits written")
+    for yr, ct in sorted(year_counts.items()):
+        print(f"  {yr}: {ct}")
+
+    return players
+
+
+# ---------------------------------------------------------------------------
+# Step 3 — Build per-school offer files (public/offers/{slug}.json)
+# ---------------------------------------------------------------------------
+
+def normalize_name(name: str) -> str:
+    return re.sub(r"\s+", " ", name).strip().lower()
+
+
+def build_player_lookup(players: list[dict]) -> dict[tuple, dict]:
+    """Return {(normalized_name, year): player_record} for 2026+ players."""
+    lookup = {}
+    for p in players:
+        if p["year"] >= 2026:
+            key = (normalize_name(p["name"]), p["year"])
+            lookup[key] = p
+    return lookup
+
+
+def load_offer_files() -> dict:
+    """Return {slug: {year: [raw_offer_records]}}."""
+    result: dict[str, dict[int, list[dict]]] = {}
+
+    for year in OFFER_YEARS:
+        for path in OFFERS_DIR.glob(f"*_{year}.json"):
+            slug = path.stem[: -len(f"_{year}")]
+            records = json.loads(path.read_text())
+            if not isinstance(records, list):
+                continue
+            result.setdefault(slug, {}).setdefault(year, [])
+            result[slug][year] = records
+
+    return result
+
+
+def build_offer_files(schools: list, players: list) -> tuple:
+    """
+    Write public/offers/{slug}.json for each school.
+    Returns (files_written, player_offers_map).
+    player_offers_map: {"name|year": ["School1", ...]}
+    """
+    player_lookup = build_player_lookup(players)
+    slug_to_name = {s["slug_247"]: s["name"] for s in schools}
+
+    offer_data = load_offer_files()
+    if not offer_data:
+        print("WARN: no offer files found in data/offers_raw/ — skipping offer output")
+        return 0, {}
+
+    player_offers = {}
+    files_written = 0
+
+    for slug, years_data in offer_data.items():
+        school_name = slug_to_name.get(slug, slug)
+        output: dict[str, list[dict]] = {}
+
+        for year, records in sorted(years_data.items()):
+            year_offers = []
+            for rec in records:
+                raw_name = rec.get("name", "")
+                key = (normalize_name(raw_name), year)
+                cfbd = player_lookup.get(key)
+
+                if cfbd is None:
+                    continue  # No CFBD coords — skip
+
+                offer_rec = {
+                    "name": raw_name,
+                    "position": rec.get("position") or cfbd.get("position", ""),
+                    "stars": cfbd.get("stars"),
+                    "rating_247": rec.get("rating_247"),
+                    "committed_to": rec.get("committed_to") or cfbd.get("committed_to"),
+                    "lat": cfbd["lat"],
+                    "lng": cfbd["lng"],
+                    "hometown_city": cfbd.get("hometown_city", ""),
+                    "hometown_state": cfbd.get("hometown_state", ""),
+                }
+                year_offers.append(offer_rec)
+
+                # Accumulate player_offers map
+                po_key = f"{raw_name}|{year}"
+                player_offers.setdefault(po_key, [])
+                if school_name not in player_offers[po_key]:
+                    player_offers[po_key].append(school_name)
+
+            output[str(year)] = year_offers
+
+        out_path = PUBLIC_OFFERS_DIR / f"{slug}.json"
+        out_path.write_text(json.dumps(output, separators=(",", ":")))
+        files_written += 1
+
+    print(f"offers/{{slug}}.json: {files_written} files written")
+    return files_written, player_offers
+
+
+# ---------------------------------------------------------------------------
+# Step 4 — Build player_offers.json
+# ---------------------------------------------------------------------------
+
+def build_player_offers(player_offers: dict) -> None:
+    out_path = PUBLIC_DIR / "player_offers.json"
+    out_path.write_text(json.dumps(player_offers, separators=(",", ":")))
+    print(f"player_offers.json: {len(player_offers)} entries written")
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+def main():
+    print("=== Step 1: schools.json ===")
+    schools = build_schools()
+    valid_school_ids = {s["id"] for s in schools}
+
+    print("\n=== Step 2: players.json ===")
+    players = build_players(valid_school_ids)
+
+    print("\n=== Step 3: offers/{slug}.json ===")
+    files_written, player_offers = build_offer_files(schools, players)
+
+    print("\n=== Step 4: player_offers.json ===")
+    build_player_offers(player_offers)
+
+    print("\n=== Done ===")
+
+
+if __name__ == "__main__":
+    main()

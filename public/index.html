@@ -1,0 +1,1629 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>CFB Recruiting Pipeline</title>
+  <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+  <script src="https://cdn.jsdelivr.net/npm/topojson@3"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html { height: 100%; overflow: hidden; }
+
+    body {
+      height: 100%;
+      background: #0d1117;
+      color: #e6edf3;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      overflow: hidden;
+    }
+
+    /* ── Controls bar ─────────────────────────────────────── */
+    #controls {
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      z-index: 20;
+      background: rgba(13, 17, 23, 0.95);
+      border-bottom: 1px solid #30363d;
+      padding: 8px 16px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      height: 52px;
+    }
+
+    #app-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: #c9d1d9;
+      white-space: nowrap;
+      letter-spacing: 0.01em;
+      flex-shrink: 0;
+    }
+
+    .search-wrap {
+      position: relative;
+      flex: 1;
+      max-width: 300px;
+    }
+
+    #school-search {
+      width: 100%;
+      padding: 6px 10px;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      background: #161b22;
+      color: #e6edf3;
+      font-size: 13px;
+      outline: none;
+    }
+    #school-search:focus { border-color: #388bfd; }
+    #school-search::placeholder { color: #8b949e; }
+
+    #school-list {
+      position: fixed;
+      z-index: 30;
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      overflow-y: auto;
+      max-height: 260px;
+      min-width: 220px;
+      display: none;
+      box-shadow: 0 8px 24px rgba(1, 4, 9, 0.5);
+    }
+    .school-option {
+      padding: 8px 12px;
+      cursor: pointer;
+      font-size: 13px;
+      border-bottom: 1px solid #21262d;
+    }
+    .school-option:last-child { border-bottom: none; }
+    .school-option:hover { background: #21262d; }
+    .school-conf { font-size: 11px; color: #8b949e; margin-left: 6px; }
+
+    #year-select {
+      padding: 6px 8px;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      background: #161b22;
+      color: #e6edf3;
+      font-size: 12px;
+      outline: none;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+    #year-select:focus { border-color: #388bfd; }
+
+    /* ── Mode toggle ──────────────────────────────────────── */
+    .mode-toggle {
+      display: flex;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      overflow: hidden;
+      flex-shrink: 0;
+    }
+    .mode-btn {
+      padding: 5px 11px;
+      font-size: 12px;
+      cursor: pointer;
+      background: none;
+      border: none;
+      color: #8b949e;
+      font-family: inherit;
+      transition: background 0.12s, color 0.12s;
+      white-space: nowrap;
+    }
+    .mode-btn + .mode-btn { border-left: 1px solid #30363d; }
+    .mode-btn.active { background: #21262d; color: #f0f6fc; }
+    .mode-btn:hover:not(.active) { color: #c9d1d9; }
+
+    #about-btn {
+      background: none;
+      border: 1px solid #30363d;
+      color: #8b949e;
+      border-radius: 6px;
+      padding: 5px 10px;
+      font-size: 12px;
+      cursor: pointer;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    #about-btn:hover { color: #f0f6fc; border-color: #8b949e; }
+
+    /* ── School info bar ──────────────────────────────────── */
+    #school-bar {
+      position: fixed;
+      top: 52px; left: 0; right: 0;
+      height: 40px;
+      background: rgba(13, 17, 23, 0.97);
+      border-bottom: 1px solid #21262d;
+      padding: 0 16px;
+      display: none;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      z-index: 19;
+    }
+    #school-bar.visible { display: flex; }
+    #school-bar-name {
+      font-size: 15px;
+      font-weight: 700;
+      color: #f0f6fc;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      flex: 1;
+      min-width: 0;
+    }
+    #school-bar-counts {
+      font-size: 12px;
+      white-space: nowrap;
+      flex-shrink: 0;
+      color: #58a6ff;
+      cursor: pointer;
+      padding: 5px 13px;
+      background: rgba(56, 139, 253, 0.12);
+      border: 1px solid rgba(56, 139, 253, 0.35);
+      border-radius: 14px;
+    }
+    #school-bar-counts:active { background: rgba(56, 139, 253, 0.22); }
+
+    /* ── Map ──────────────────────────────────────────────── */
+    #map-container {
+      position: fixed;
+      top: 52px; left: 0; right: 0;
+      bottom: calc(36px + env(safe-area-inset-bottom, 0px));
+    }
+    svg#map {
+      width: 100%;
+      height: 100%;
+      cursor: grab;
+    }
+    svg#map:active { cursor: grabbing; }
+
+    .state {
+      fill: #161b22;
+      stroke: #30363d;
+      stroke-width: 0.5;
+    }
+    .state.pm-interactive {
+      cursor: pointer;
+    }
+    .state.pm-interactive:hover { fill: #1c2230 !important; }
+    .state.pm-selected { stroke: #388bfd !important; stroke-width: 1.5 !important; }
+
+    .school-group { cursor: pointer; }
+    .school-dot {
+      fill: #484f58;
+      stroke: #8b949e;
+      stroke-width: 0.8;
+      transition: fill 0.15s;
+    }
+    .school-group:hover .school-dot { fill: #8b949e; }
+    .school-dot.selected { fill: #f0f6fc; stroke: #f0f6fc; }
+    .school-dot.pm-dim { fill: #2a3039; stroke: #484f58; opacity: 0.5; }
+    .school-dot.pm-lit {
+      fill: #388bfd;
+      stroke: #58a6ff;
+      stroke-width: 1.5;
+    }
+    .school-dot.pm-committed {
+      fill: #d29922;
+      stroke: #e3b341;
+      stroke-width: 1.5;
+    }
+    .school-hit { pointer-events: all; }
+
+    .recruit-arc { fill: none; pointer-events: stroke; cursor: pointer; }
+    .recruit-arc:hover { opacity: 1 !important; stroke-width: 2 !important; }
+    .recruit-dot { cursor: pointer; }
+    .recruit-dot:hover { opacity: 1 !important; }
+
+    /* ── Tooltip ──────────────────────────────────────────── */
+    #tooltip {
+      position: fixed;
+      pointer-events: none;
+      background: rgba(13, 17, 23, 0.95);
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      padding: 8px 12px;
+      font-size: 12px;
+      line-height: 1.6;
+      display: none;
+      z-index: 40;
+      max-width: 240px;
+    }
+    #tooltip strong { color: #f0f6fc; font-size: 13px; }
+    .stars-gold { color: #d29922; }
+    .stars-blue { color: #388bfd; }
+    .stars-green { color: #3fb950; }
+    .stars-gray { color: #8b949e; }
+
+    /* ── Info bar ─────────────────────────────────────────── */
+    #info-bar {
+      position: fixed;
+      bottom: 0; left: 0; right: 0;
+      min-height: 36px;
+      height: calc(36px + env(safe-area-inset-bottom, 0px));
+      background: rgba(13, 17, 23, 0.95);
+      border-top: 1px solid #30363d;
+      padding: 0 16px env(safe-area-inset-bottom, 0px);
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      font-size: 12px;
+      color: #8b949e;
+    }
+    .legend-item { display: flex; align-items: center; gap: 4px; }
+    .legend-dot { width: 8px; height: 8px; border-radius: 50%; }
+    .legend-dash {
+      width: 18px;
+      height: 2px;
+      background: repeating-linear-gradient(
+        to right, currentColor 0, currentColor 5px, transparent 5px, transparent 9px
+      );
+    }
+    #hint { font-style: italic; margin-left: auto; }
+
+    /* ── Players / State panel ────────────────────────────── */
+    #players-panel {
+      position: fixed;
+      left: 0; right: 0;
+      bottom: calc(36px + env(safe-area-inset-bottom, 0px));
+      max-height: 65vh;
+      background: #161b22;
+      border-top: 1px solid #30363d;
+      border-radius: 12px 12px 0 0;
+      z-index: 50;
+      display: flex;
+      flex-direction: column;
+      transform: translateY(100%);
+      transition: transform 0.25s ease;
+      box-shadow: 0 -4px 24px rgba(1, 4, 9, 0.6);
+    }
+    #players-panel.open { transform: translateY(0); }
+
+    #players-header {
+      display: flex;
+      align-items: center;
+      padding: 12px 16px;
+      border-bottom: 1px solid #21262d;
+      flex-shrink: 0;
+      gap: 8px;
+    }
+    #players-title {
+      flex: 1;
+      font-size: 14px;
+      font-weight: 600;
+      color: #f0f6fc;
+      min-width: 0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    #players-close {
+      background: none;
+      border: none;
+      color: #8b949e;
+      font-size: 18px;
+      cursor: pointer;
+      padding: 0 2px;
+      line-height: 1;
+      flex-shrink: 0;
+    }
+    #players-close:hover { color: #f0f6fc; }
+
+    /* Tabs (school mode only) */
+    #players-tabs {
+      display: flex;
+      border-bottom: 1px solid #21262d;
+      flex-shrink: 0;
+    }
+    .panel-tab {
+      flex: 1;
+      padding: 8px 4px;
+      font-size: 12px;
+      cursor: pointer;
+      background: none;
+      border: none;
+      color: #8b949e;
+      border-bottom: 2px solid transparent;
+      font-family: inherit;
+      transition: color 0.12s, border-color 0.12s;
+      text-align: center;
+    }
+    .panel-tab.active { color: #58a6ff; border-bottom-color: #388bfd; }
+    .panel-tab:hover:not(.active) { color: #c9d1d9; }
+
+    /* Player back strip (player arc view) */
+    #player-back-strip {
+      display: none;
+      align-items: center;
+      padding: 10px 16px;
+      border-bottom: 1px solid #21262d;
+      flex-shrink: 0;
+      gap: 10px;
+    }
+    #player-back-strip.visible { display: flex; }
+    #player-back-btn {
+      background: none;
+      border: none;
+      color: #58a6ff;
+      font-size: 12px;
+      cursor: pointer;
+      padding: 0;
+      font-family: inherit;
+      flex-shrink: 0;
+    }
+    #player-back-btn:hover { text-decoration: underline; }
+    #player-back-info {
+      flex: 1;
+      min-width: 0;
+    }
+    #player-back-name {
+      font-size: 13px;
+      font-weight: 600;
+      color: #f0f6fc;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    #player-back-meta {
+      font-size: 11px;
+      color: #8b949e;
+    }
+
+    #players-list {
+      overflow-y: auto;
+      flex: 1;
+      -webkit-overflow-scrolling: touch;
+    }
+    .player-row {
+      display: flex;
+      align-items: center;
+      padding: 9px 16px;
+      border-bottom: 1px solid #21262d;
+      gap: 10px;
+      font-size: 13px;
+      cursor: default;
+    }
+    .player-row.tappable { cursor: pointer; }
+    .player-row.tappable:hover { background: #1c2128; }
+    .player-row:last-child { border-bottom: none; }
+    .player-star-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .player-name-pos {
+      flex: 1.5;
+      min-width: 0;
+      display: flex;
+      align-items: baseline;
+      gap: 4px;
+    }
+    .player-name { color: #e6edf3; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+    .player-pos { color: #8b949e; font-size: 11px; flex-shrink: 0; }
+    .player-hometown { flex: 1; color: #8b949e; font-size: 12px; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .player-year { color: #8b949e; font-size: 12px; flex-shrink: 0; }
+    .player-commit { color: #3fb950; font-size: 11px; flex-shrink: 0; }
+
+    /* ── Feedback button ──────────────────────────────────── */
+    #feedback-btn {
+      position: fixed;
+      bottom: calc(44px + env(safe-area-inset-bottom, 0px));
+      right: 14px;
+      z-index: 45;
+      background: #21262d;
+      border: 1px solid #30363d;
+      border-radius: 20px;
+      color: #8b949e;
+      font-size: 12px;
+      font-family: inherit;
+      padding: 5px 10px 5px 8px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      white-space: nowrap;
+      transition: background 0.15s, color 0.15s;
+    }
+    #feedback-btn:hover { background: #30363d; color: #e6edf3; }
+
+    /* ── Feedback panel ───────────────────────────────────── */
+    #feedback-panel {
+      position: fixed;
+      left: 0; right: 0;
+      bottom: calc(36px + env(safe-area-inset-bottom, 0px));
+      max-height: 70vh;
+      background: #161b22;
+      border-top: 1px solid #30363d;
+      border-radius: 12px 12px 0 0;
+      z-index: 50;
+      display: flex;
+      flex-direction: column;
+      transform: translateY(100%);
+      transition: transform 0.25s ease;
+      box-shadow: 0 -4px 24px rgba(1, 4, 9, 0.6);
+    }
+    #feedback-panel.open { transform: translateY(0); }
+    #feedback-header { display: flex; align-items: center; padding: 12px 16px; border-bottom: 1px solid #21262d; flex-shrink: 0; gap: 8px; }
+    #feedback-header span { flex: 1; font-size: 14px; font-weight: 600; color: #f0f6fc; }
+    #feedback-close { background: none; border: none; color: #8b949e; font-size: 18px; cursor: pointer; padding: 0 2px; line-height: 1; }
+    #feedback-close:hover { color: #f0f6fc; }
+    #feedback-body { padding: 16px; overflow-y: auto; flex: 1; -webkit-overflow-scrolling: touch; }
+    .fb-type-row { display: flex; gap: 8px; margin-bottom: 14px; }
+    .fb-type-btn { flex: 1; padding: 6px 4px; border: 1px solid #30363d; border-radius: 6px; background: #0d1117; color: #8b949e; font-size: 12px; font-family: inherit; cursor: pointer; text-align: center; transition: background 0.12s, color 0.12s, border-color 0.12s; }
+    .fb-type-btn.active { border-color: #388bfd; background: rgba(56,139,253,0.1); color: #58a6ff; }
+    #feedback-desc { width: 100%; min-height: 90px; padding: 8px 10px; border: 1px solid #30363d; border-radius: 6px; background: #0d1117; color: #e6edf3; font-size: 13px; font-family: inherit; resize: vertical; outline: none; margin-bottom: 10px; }
+    #feedback-desc:focus { border-color: #388bfd; }
+    #feedback-desc::placeholder { color: #8b949e; }
+    #feedback-email { width: 100%; padding: 7px 10px; border: 1px solid #30363d; border-radius: 6px; background: #0d1117; color: #e6edf3; font-size: 13px; font-family: inherit; outline: none; margin-bottom: 14px; }
+    #feedback-email:focus { border-color: #388bfd; }
+    #feedback-email::placeholder { color: #8b949e; }
+    #feedback-submit { width: 100%; padding: 8px; background: #238636; border: 1px solid #2ea043; border-radius: 6px; color: #fff; font-size: 13px; font-family: inherit; font-weight: 600; cursor: pointer; transition: background 0.15s; }
+    #feedback-submit:hover:not(:disabled) { background: #2ea043; }
+    #feedback-submit:disabled { opacity: 0.5; cursor: default; }
+    #feedback-status { margin-top: 10px; font-size: 12px; text-align: center; min-height: 18px; }
+    #feedback-status.ok { color: #3fb950; }
+    #feedback-status.err { color: #ff7b72; }
+
+    /* ── About modal ─────────────────────────────────────── */
+    #about-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.65); z-index: 100; align-items: center; justify-content: center; padding: 20px; }
+    #about-overlay.open { display: flex; }
+    #about-modal { background: #161b22; border: 1px solid #30363d; border-radius: 12px; width: 100%; max-width: 560px; max-height: 80vh; display: flex; flex-direction: column; overflow: hidden; }
+    #about-modal-header { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid #21262d; flex-shrink: 0; }
+    #about-modal-header h2 { font-size: 16px; font-weight: 700; color: #f0f6fc; }
+    #about-modal-body { overflow-y: auto; padding: 20px; color: #c9d1d9; font-size: 14px; line-height: 1.65; -webkit-overflow-scrolling: touch; }
+    #about-modal-body h3 { color: #f0f6fc; font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; margin: 20px 0 8px; }
+    #about-modal-body h3:first-child { margin-top: 0; }
+    #about-modal-body p { margin-bottom: 10px; }
+    #about-modal-body a { color: #58a6ff; text-decoration: none; }
+    #about-modal-body a:hover { text-decoration: underline; }
+    #about-close { background: none; border: none; color: #8b949e; cursor: pointer; font-size: 18px; padding: 2px 6px; line-height: 1; }
+    #about-close:hover { color: #f0f6fc; }
+
+    /* ── Welcome tip ─────────────────────────────────────── */
+    #welcome-tip {
+      position: fixed;
+      bottom: 60px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(22, 27, 34, 0.97);
+      border: 1px solid #30363d;
+      border-radius: 10px;
+      padding: 12px 18px;
+      color: #c9d1d9;
+      font-size: 13px;
+      line-height: 1.5;
+      max-width: 320px;
+      width: calc(100% - 32px);
+      text-align: center;
+      z-index: 50;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.5);
+      transition: opacity 0.4s;
+    }
+    #welcome-tip.hidden { opacity: 0; pointer-events: none; }
+    #welcome-tip strong { color: #f0f6fc; display: block; margin-bottom: 4px; font-size: 14px; }
+    #welcome-tip-dismiss { display: inline-block; margin-top: 10px; background: #21262d; border: 1px solid #30363d; color: #8b949e; border-radius: 6px; padding: 4px 14px; font-size: 12px; cursor: pointer; }
+    #welcome-tip-dismiss:hover { color: #f0f6fc; }
+
+    /* ── Mobile ───────────────────────────────────────────── */
+    @media (max-width: 600px) {
+      #app-title { display: none; }
+      .search-wrap { max-width: none; }
+      #info-bar { display: none; }
+      #map-container { bottom: env(safe-area-inset-bottom, 0px); }
+      #players-panel, #feedback-panel { bottom: env(safe-area-inset-bottom, 0px); }
+      #feedback-btn { bottom: calc(10px + env(safe-area-inset-bottom, 0px)); }
+    }
+    @media (max-width: 420px) {
+      .search-wrap { max-width: 120px; }
+    }
+  </style>
+</head>
+<body>
+
+<div id="controls">
+  <span id="app-title">CFB Recruiting Pipeline</span>
+  <div class="search-wrap" id="search-wrap">
+    <input type="text" id="school-search" placeholder="Search for a school…" autocomplete="off" spellcheck="false">
+  </div>
+  <div id="school-list"></div>
+  <select id="year-select"></select>
+  <div class="mode-toggle">
+    <button class="mode-btn active" id="btn-school">School</button>
+    <button class="mode-btn" id="btn-player">Player</button>
+  </div>
+  <button id="about-btn">About</button>
+</div>
+
+<div id="school-bar">
+  <span id="school-bar-name"></span>
+  <span id="school-bar-counts"></span>
+</div>
+
+<div id="map-container">
+  <svg id="map"></svg>
+</div>
+
+<div id="tooltip"></div>
+
+<button id="feedback-btn" aria-label="Leave feedback">
+  <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor">
+    <path d="M1 2.75C1 1.784 1.784 1 2.75 1h10.5c.966 0 1.75.784 1.75 1.75v7.5A1.75 1.75 0 0 1 13.25 12H9.06l-2.573 2.573A1.458 1.458 0 0 1 4 13.543V12H2.75A1.75 1.75 0 0 1 1 10.25Z"/>
+  </svg>
+  Feedback
+</button>
+
+<div id="feedback-panel">
+  <div id="feedback-header">
+    <span>Share feedback</span>
+    <button id="feedback-close" aria-label="Close">✕</button>
+  </div>
+  <div id="feedback-body">
+    <div class="fb-type-row">
+      <button class="fb-type-btn active" data-type="Suggestion">💡 Suggestion</button>
+      <button class="fb-type-btn" data-type="Bug">🐛 Bug</button>
+      <button class="fb-type-btn" data-type="Data">📊 Data issue</button>
+    </div>
+    <textarea id="feedback-desc" placeholder="Describe what you'd like to see changed or fixed…" maxlength="1000"></textarea>
+    <input type="email" id="feedback-email" placeholder="Email (optional, if you'd like a reply)">
+    <button id="feedback-submit">Submit feedback</button>
+    <div id="feedback-status"></div>
+  </div>
+</div>
+
+<div id="players-panel">
+  <div id="players-header">
+    <span id="players-title"></span>
+    <button id="players-close" aria-label="Close">✕</button>
+  </div>
+  <div id="players-tabs">
+    <button class="panel-tab active" data-tab="commits">Commits</button>
+    <button class="panel-tab" data-tab="targets">Targets</button>
+    <button class="panel-tab" data-tab="lost">Lost</button>
+  </div>
+  <div id="player-back-strip">
+    <button id="player-back-btn">← Back</button>
+    <div id="player-back-info">
+      <div id="player-back-name"></div>
+      <div id="player-back-meta"></div>
+    </div>
+  </div>
+  <div id="players-list"></div>
+</div>
+
+<div id="info-bar">
+  <div class="legend-item"><div class="legend-dot" style="background:#d29922"></div><span>5★</span></div>
+  <div class="legend-item"><div class="legend-dot" style="background:#388bfd"></div><span>4★</span></div>
+  <div class="legend-item"><div class="legend-dot" style="background:#3fb950"></div><span>3★</span></div>
+  <div class="legend-item"><div class="legend-dot" style="background:#8b949e"></div><span>2★</span></div>
+  <div class="legend-item" id="legend-pipeline" style="display:none">
+    <div class="legend-dash" style="color:#388bfd; display:inline-block"></div><span>target</span>
+  </div>
+  <div class="legend-item" id="legend-lost" style="display:none">
+    <div class="legend-dash" style="color:#484f58; display:inline-block"></div><span>lost</span>
+  </div>
+  <span id="hint">Click a school dot or search to explore</span>
+</div>
+
+<div id="about-overlay">
+  <div id="about-modal">
+    <div id="about-modal-header">
+      <h2>About this tool</h2>
+      <button id="about-close" aria-label="Close">✕</button>
+    </div>
+    <div id="about-modal-body">
+      <h3>What is this?</h3>
+      <p>CFB Recruiting Pipeline is an interactive map showing college football recruiting — who each program has signed, who they're targeting, and who they lost to competitors. Switch to Player mode to browse uncommitted prospects by state and see their full offer landscape.</p>
+      <h3>School mode</h3>
+      <p>Search or click any FBS program. Solid arcs show committed recruits. Dashed arcs show current pipeline targets (offered, uncommitted). Faint arcs show recruits who were offered but chose another school.</p>
+      <h3>Player mode</h3>
+      <p>Tap any state to see uncommitted recruits from that area. Tap a player to see every school that has offered them, with their committed school (if any) highlighted in gold.</p>
+      <h3>The data</h3>
+      <p>Historical commit data (2015–2025) comes from the <a href="https://collegefootballdata.com" target="_blank" rel="noopener">College Football Data API</a>. Current pipeline data (2026+) adds offer information from 247Sports. Data updates daily for commits and weekly for offer lists.</p>
+      <h3>About the author</h3>
+      <p>Built by <a href="https://www.palmercjones.com" target="_blank" rel="noopener">Palmer Jones</a>. If you find a data error or have a feature idea, use the feedback button.</p>
+    </div>
+  </div>
+</div>
+
+<div id="welcome-tip">
+  <strong>CFB Recruiting Pipeline</strong>
+  <b>School mode:</b> tap any dot or search to see a program's commits, targets, and lost offers.<br>
+  <b>Player mode:</b> tap a state to browse uncommitted recruits.
+  <br><br>
+  <button id="welcome-tip-dismiss">Got it</button>
+</div>
+
+<script>
+"use strict";
+
+// ── Constants ─────────────────────────────────────────────
+// Change to CDN URL after first publish:
+// "https://cdn.jsdelivr.net/gh/palmerjones0/cfb-recruiting-pipeline@v1.0.0/public"
+const DATA_BASE = ".";
+const FEEDBACK_WORKER = "https://cfb-feedback-worker.palmer-da0.workers.dev";
+
+const PIPELINE_YEARS = [2026, 2027, 2028];
+
+const STAR_COLOR = { 5: "#d29922", 4: "#388bfd", 3: "#3fb950", 2: "#8b949e", 1: "#8b949e", 0: "#8b949e" };
+const STAR_CLASS = { 5: "stars-gold", 4: "stars-blue", 3: "stars-green", 2: "stars-gray", 1: "stars-gray", 0: "stars-gray" };
+
+// Maps TopoJSON state full name → 2-letter abbreviation
+const STATE_NAME_TO_ABBREV = {
+  "Alabama":"AL","Alaska":"AK","Arizona":"AZ","Arkansas":"AR","California":"CA",
+  "Colorado":"CO","Connecticut":"CT","Delaware":"DE","Florida":"FL","Georgia":"GA",
+  "Hawaii":"HI","Idaho":"ID","Illinois":"IL","Indiana":"IN","Iowa":"IA",
+  "Kansas":"KS","Kentucky":"KY","Louisiana":"LA","Maine":"ME","Maryland":"MD",
+  "Massachusetts":"MA","Michigan":"MI","Minnesota":"MN","Mississippi":"MS",
+  "Missouri":"MO","Montana":"MT","Nebraska":"NE","Nevada":"NV","New Hampshire":"NH",
+  "New Jersey":"NJ","New Mexico":"NM","New York":"NY","North Carolina":"NC",
+  "North Dakota":"ND","Ohio":"OH","Oklahoma":"OK","Oregon":"OR","Pennsylvania":"PA",
+  "Rhode Island":"RI","South Carolina":"SC","South Dakota":"SD","Tennessee":"TN",
+  "Texas":"TX","Utah":"UT","Vermont":"VT","Virginia":"VA","Washington":"WA",
+  "West Virginia":"WV","Wisconsin":"WI","Wyoming":"WY","District of Columbia":"DC",
+  "Puerto Rico":"PR"
+};
+
+// ── App state ─────────────────────────────────────────────
+let mode = "school";
+let selectedSchool = null;
+let selectedYear = "all";
+let selectedState = null;
+let selectedPlayer = null;
+let playersTab = "commits";
+
+// Data
+let allPlayers = [];
+let schoolMap = {};
+let schoolsList = [];
+let playerOffers = {};
+let schoolOffersCache = {};
+let stateLoadedOffers = null; // offer data for currently selected school
+let jitteredPositions = {};
+let stateFeatures = null;
+let stateHeat = {};
+let projection, pathGen;
+let allYears = [];
+
+// ── DOM refs ──────────────────────────────────────────────
+const svg = d3.select("#map");
+const mapContainer = document.getElementById("map-container");
+const tooltip = document.getElementById("tooltip");
+const hint = document.getElementById("hint");
+const schoolSearch = document.getElementById("school-search");
+const schoolListEl = document.getElementById("school-list");
+const yearSelect = document.getElementById("year-select");
+const searchWrap = document.getElementById("search-wrap");
+const schoolBar = document.getElementById("school-bar");
+const schoolBarName = document.getElementById("school-bar-name");
+const schoolBarCounts = document.getElementById("school-bar-counts");
+const playersPanel = document.getElementById("players-panel");
+const playersTitle = document.getElementById("players-title");
+const playersList = document.getElementById("players-list");
+const playersTabs = document.getElementById("players-tabs");
+const playerBackStrip = document.getElementById("player-back-strip");
+const playerBackName = document.getElementById("player-back-name");
+const playerBackMeta = document.getElementById("player-back-meta");
+const legendPipeline = document.getElementById("legend-pipeline");
+const legendLost = document.getElementById("legend-lost");
+
+// ── SVG layer structure ───────────────────────────────────
+const zoomLayer = svg.append("g").attr("class", "zoom-layer");
+const baseLayer = zoomLayer.append("g").attr("class", "base-layer");
+const stateLayer = zoomLayer.append("g").attr("class", "state-interact-layer");
+const schoolLayer = zoomLayer.append("g").attr("class", "school-layer");
+let arcLayer = zoomLayer.insert("g", ".school-layer").attr("class", "arc-layer");
+
+// ── Zoom ──────────────────────────────────────────────────
+let currentZoom = 1;
+const zoom = d3.zoom()
+  .scaleExtent([1, 10])
+  .on("zoom", ({ transform }) => {
+    zoomLayer.attr("transform", transform);
+    const k = transform.k;
+    if (k !== currentZoom) {
+      currentZoom = k;
+      const r = hitRadius() / k;
+      schoolLayer.selectAll("circle.school-hit").attr("r", r);
+    }
+  });
+svg.call(zoom);
+svg.on("dblclick.zoom", null);
+svg.on("dblclick", () => svg.transition().duration(400).call(zoom.transform, d3.zoomIdentity));
+
+// ── Sizing helpers ────────────────────────────────────────
+function getSize() { return [mapContainer.clientWidth, mapContainer.clientHeight]; }
+function dotRadius() { return Math.max(2.5, Math.min(5, getSize()[0] / 180)); }
+function hitRadius() { return Math.max(dotRadius() * 2.5, 14); }
+function recruitDotRadius(stars) {
+  const base = Math.max(1.5, Math.min(3.5, getSize()[0] / 250));
+  return base * (0.7 + (stars || 0) * 0.06);
+}
+
+// ── Projection ────────────────────────────────────────────
+function buildProjection(w, h, features) {
+  return d3.geoAlbersUsa().fitSize([w, h], features);
+}
+
+// ── Jitter ────────────────────────────────────────────────
+function computeJitteredPositions(schools) {
+  const minDist = dotRadius() * 2 + 1.5;
+  const nodes = schools.map(s => {
+    const pt = projection([s.lng, s.lat]) ?? [-9999, -9999];
+    return { id: s.id, x: pt[0], y: pt[1] };
+  });
+  for (let iter = 0; iter < 60; iter++) {
+    for (let i = 0; i < nodes.length; i++) {
+      for (let j = i + 1; j < nodes.length; j++) {
+        const dx = nodes[j].x - nodes[i].x, dy = nodes[j].y - nodes[i].y;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 0.001;
+        if (dist < minDist) {
+          const push = (minDist - dist) / 2, nx = dx / dist, ny = dy / dist;
+          nodes[i].x -= nx * push; nodes[i].y -= ny * push;
+          nodes[j].x += nx * push; nodes[j].y += ny * push;
+        }
+      }
+    }
+  }
+  jitteredPositions = {};
+  nodes.forEach(n => { jitteredPositions[n.id] = [n.x, n.y]; });
+}
+
+// ── Arc path ──────────────────────────────────────────────
+function arcPath(sx, sy, tx, ty) {
+  const dx = tx - sx, dy = ty - sy;
+  const len = Math.sqrt(dx * dx + dy * dy) || 1;
+  const curveOffset = len * 0.22;
+  const cx = (sx + tx) / 2 - (dy / len) * curveOffset;
+  const cy = (sy + ty) / 2 + (dx / len) * curveOffset;
+  return `M${sx},${sy} Q${cx},${cy} ${tx},${ty}`;
+}
+
+// ── Tooltip ───────────────────────────────────────────────
+function showTooltip(event, html) {
+  tooltip.innerHTML = html;
+  tooltip.style.display = "block";
+  void tooltip.offsetWidth;
+  moveTooltip(event);
+}
+function moveTooltip(event) {
+  const x = event.clientX ?? event.touches?.[0]?.clientX ?? 0;
+  const y = event.clientY ?? event.touches?.[0]?.clientY ?? 0;
+  const tw = tooltip.offsetWidth, th = tooltip.offsetHeight;
+  tooltip.style.left = Math.max(6, Math.min(x + 14, window.innerWidth - tw - 6)) + "px";
+  tooltip.style.top = Math.max(58, Math.min(y + 14, window.innerHeight - th - 6)) + "px";
+}
+function hideTooltip() { tooltip.style.display = "none"; }
+
+function recruitTooltipHtml(r) {
+  const stars = r.stars || 0;
+  const starStr = "★".repeat(stars) + "☆".repeat(Math.max(0, 5 - stars));
+  return `<strong>${r.name}</strong><br>` +
+    `<span class="${STAR_CLASS[stars]}">${starStr}</span> ${r.position}<br>` +
+    `${r.hometown_city}, ${r.hometown_state} (${r.year})`;
+}
+
+// ── Zoom to fit bounds ────────────────────────────────────
+function zoomToFit(points, extraTopPad = 50) {
+  const [w, h] = getSize();
+  const padTop = 98 + extraTopPad, padBottom = 10, padSide = 10;
+  let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+  points.forEach(pt => {
+    if (!pt) return;
+    if (pt[0] < x0) x0 = pt[0]; if (pt[0] > x1) x1 = pt[0];
+    if (pt[1] < y0) y0 = pt[1]; if (pt[1] > y1) y1 = pt[1];
+  });
+  if (!isFinite(x0)) return;
+  const scale = Math.min(
+    (w - padSide * 2) / Math.max(x1 - x0, 1),
+    (h - padTop - padBottom) / Math.max(y1 - y0, 1),
+    16
+  );
+  const tx = w / 2 - scale * (x0 + x1) / 2;
+  const ty = (padTop + h - padBottom) / 2 - scale * (y0 + y1) / 2;
+  svg.transition().duration(650).ease(d3.easeCubicInOut)
+    .call(zoom.transform, d3.zoomIdentity.translate(tx, ty).scale(scale));
+}
+
+// ── Data loading: school offers (lazy) ───────────────────
+async function loadSchoolOffers(school) {
+  const slug = school.slug_247;
+  if (!slug) return null;
+  if (slug in schoolOffersCache) return schoolOffersCache[slug];
+  try {
+    const data = await d3.json(`${DATA_BASE}/offers/${slug}.json`);
+    schoolOffersCache[slug] = data;
+    return data;
+  } catch {
+    schoolOffersCache[slug] = null;
+    return null;
+  }
+}
+
+// ── State heat (player mode) ──────────────────────────────
+function computeStateHeat(year) {
+  const counts = {};
+  const yNum = parseInt(year);
+  const players = allPlayers.filter(p =>
+    p.committed_to === null && (isNaN(yNum) ? PIPELINE_YEARS.includes(p.year) : p.year === yNum)
+  );
+  players.forEach(p => {
+    if (!p.hometown_state) return;
+    counts[p.hometown_state] = (counts[p.hometown_state] || 0) + Math.max(p.stars || 1, 1);
+  });
+  const max = Math.max(...Object.values(counts), 1);
+  stateHeat = Object.fromEntries(Object.entries(counts).map(([k, v]) => [k, v / max]));
+  applyStateHeat();
+}
+
+function stateHeatColor(abbrev) {
+  const v = stateHeat[abbrev] || 0;
+  return v > 0 ? d3.interpolateRgb("#161b22", "#1d3a5f")(v * 0.85) : "#161b22";
+}
+
+function applyStateHeat() {
+  if (mode !== "player") return;
+  stateLayer.selectAll("path.state-hit").attr("fill", d => {
+    const abbrev = STATE_NAME_TO_ABBREV[d.properties.name];
+    return stateHeatColor(abbrev);
+  });
+}
+
+// ── Clear all arcs ────────────────────────────────────────
+function clearArcs() {
+  arcLayer.remove();
+  arcLayer = zoomLayer.insert("g", ".school-layer").attr("class", "arc-layer");
+}
+
+// ── Draw arcs: school mode ────────────────────────────────
+function drawAnimatedArc(group, sx, sy, tx, ty, color, strokeW, opacity, dashArray, delay) {
+  const el = group.append("path")
+    .attr("class", "recruit-arc")
+    .attr("d", arcPath(sx, sy, tx, ty))
+    .attr("stroke", color)
+    .attr("stroke-width", strokeW)
+    .attr("opacity", opacity);
+  if (dashArray) el.style("stroke-dasharray", dashArray);
+
+  const totalLength = el.node().getTotalLength();
+  el.style("stroke-dasharray", dashArray
+    ? `${dashArray}, ${totalLength}`
+    : `${totalLength} ${totalLength}`)
+    .style("stroke-dashoffset", totalLength)
+    .transition().duration(400).delay(delay).ease(d3.easeQuadOut)
+    .style("stroke-dashoffset", 0);
+
+  if (!dashArray) el.style("stroke-dasharray", null);
+  return el;
+}
+
+async function drawArcs(school, year) {
+  clearArcs();
+  schoolLayer.selectAll("circle.school-dot").attr("class", "school-dot");
+  schoolLayer.selectAll("g.school-group").select("circle.school-dot")
+    .classed("selected", d => d.id === school.id);
+
+  hint.style.display = "none";
+
+  const yearNum = parseInt(year);
+  const isPipeline = !isNaN(yearNum) && PIPELINE_YEARS.includes(yearNum);
+  const schoolPt = jitteredPositions[school.id] ?? projection([school.lng, school.lat]);
+  if (!schoolPt) return;
+
+  // Filter committed recruits
+  let commits = allPlayers.filter(r => r.school_id === school.id);
+  if (year !== "all") commits = commits.filter(r => r.year === yearNum);
+
+  const hairlineLayer = arcLayer.append("g");
+  const dashedLayer = arcLayer.append("g");
+  const solidLayer = arcLayer.append("g");
+  const dotLayer = arcLayer.append("g");
+
+  const arcW = Math.max(0.3, 1.0 / Math.sqrt(Math.max(commits.length, 15) / 15));
+  let delay = 0;
+
+  // Committed arcs (solid)
+  commits.forEach((r, i) => {
+    const homePt = projection([r.lng, r.lat]);
+    if (!homePt) return;
+    const color = STAR_COLOR[r.stars] || STAR_COLOR[0];
+    const arc = drawAnimatedArc(solidLayer, homePt[0], homePt[1], schoolPt[0], schoolPt[1],
+      color, arcW, 0.55, null, Math.min(i * 4, 500));
+    arc.on("mousemove", ev => { showTooltip(ev, recruitTooltipHtml(r)); moveTooltip(ev); })
+       .on("touchmove", ev => { showTooltip(ev, recruitTooltipHtml(r)); moveTooltip(ev); ev.preventDefault(); })
+       .on("mouseleave touchend", hideTooltip);
+    dotLayer.append("circle").attr("class", "recruit-dot")
+      .attr("cx", homePt[0]).attr("cy", homePt[1]).attr("r", recruitDotRadius(r.stars))
+      .attr("fill", color).attr("opacity", 0.65)
+      .on("mousemove", ev => { showTooltip(ev, recruitTooltipHtml(r)); moveTooltip(ev); })
+      .on("touchmove", ev => { showTooltip(ev, recruitTooltipHtml(r)); moveTooltip(ev); ev.preventDefault(); })
+      .on("mouseleave touchend", hideTooltip);
+    delay = Math.min(i * 4, 500);
+  });
+
+  // Update school bar counts (commits only for now, pipeline filled after load)
+  updateSchoolBar(school, commits.length, null, null);
+
+  // Pipeline arcs: load offers, then draw
+  if (isPipeline) {
+    legendPipeline.style.display = "";
+    legendLost.style.display = "";
+    const offerData = await loadSchoolOffers(school);
+    stateLoadedOffers = offerData;
+    const yearOffers = offerData?.[String(yearNum)] ?? [];
+
+    const targets = yearOffers.filter(o => o.committed_to === null);
+    const lost = yearOffers.filter(o => o.committed_to !== null && o.committed_to !== school.id);
+
+    targets.forEach((r, i) => {
+      const homePt = projection([r.lng, r.lat]);
+      if (!homePt) return;
+      const color = STAR_COLOR[r.stars] || STAR_COLOR[0];
+      const arc = drawAnimatedArc(dashedLayer, homePt[0], homePt[1], schoolPt[0], schoolPt[1],
+        color, arcW * 0.8, 0.60, "5,4", Math.min(delay + i * 3, 800));
+      arc.on("mousemove", ev => {
+           showTooltip(ev, recruitTooltipHtml(r) + `<br><em style="color:#8b949e">Uncommitted target</em>`);
+           moveTooltip(ev);
+         })
+         .on("touchmove", ev => { showTooltip(ev, recruitTooltipHtml(r)); moveTooltip(ev); ev.preventDefault(); })
+         .on("mouseleave touchend", hideTooltip);
+      dotLayer.append("circle").attr("class", "recruit-dot")
+        .attr("cx", homePt[0]).attr("cy", homePt[1]).attr("r", recruitDotRadius(r.stars))
+        .attr("fill", color).attr("opacity", 0.50)
+        .on("mousemove", ev => { showTooltip(ev, recruitTooltipHtml(r)); moveTooltip(ev); })
+        .on("mouseleave touchend", hideTooltip);
+    });
+
+    lost.forEach((r, i) => {
+      const homePt = projection([r.lng, r.lat]);
+      if (!homePt) return;
+      drawAnimatedArc(hairlineLayer, homePt[0], homePt[1], schoolPt[0], schoolPt[1],
+        "#484f58", 0.4, 0.20, "3,5", Math.min(delay + targets.length * 3 + i * 2, 1000));
+    });
+
+    updateSchoolBar(school, commits.length, targets.length, lost.length);
+
+    // Zoom to fit all points
+    const allPts = [
+      schoolPt,
+      ...commits.map(r => projection([r.lng, r.lat])).filter(Boolean),
+      ...targets.map(r => projection([r.lng, r.lat])).filter(Boolean),
+    ];
+    zoomToFit(allPts);
+  } else {
+    legendPipeline.style.display = "none";
+    legendLost.style.display = "none";
+    stateLoadedOffers = null;
+    const allPts = [schoolPt, ...commits.map(r => projection([r.lng, r.lat])).filter(Boolean)];
+    zoomToFit(allPts);
+  }
+}
+
+function updateSchoolBar(school, commitCount, targetCount, lostCount) {
+  schoolBarName.textContent = school.name;
+  let countStr = `${commitCount} commit${commitCount !== 1 ? "s" : ""}`;
+  if (targetCount !== null) countStr += ` · ${targetCount} target${targetCount !== 1 ? "s" : ""}`;
+  if (lostCount !== null) countStr += ` · ${lostCount} lost`;
+  countStr += " ▸";
+  schoolBarCounts.textContent = countStr;
+  schoolBar.classList.add("visible");
+  if (playersPanel.classList.contains("open")) renderSchoolPanel();
+}
+
+// ── School mode panel ─────────────────────────────────────
+function openSchoolPanel() {
+  closeFeedback();
+  renderSchoolPanel();
+  playersPanel.classList.add("open");
+}
+
+function renderSchoolPanel() {
+  if (!selectedSchool) return;
+  playersTabs.style.display = "";
+  playerBackStrip.classList.remove("visible");
+
+  const year = selectedYear;
+  const yearNum = parseInt(year);
+  const isPipeline = !isNaN(yearNum) && PIPELINE_YEARS.includes(yearNum);
+
+  let commits = allPlayers.filter(r => r.school_id === selectedSchool.id);
+  if (year !== "all") commits = commits.filter(r => r.year === yearNum);
+  commits.sort((a, b) => (b.stars || 0) - (a.stars || 0) || b.year - a.year);
+
+  const yearOffers = isPipeline ? (stateLoadedOffers?.[String(yearNum)] ?? []) : [];
+  const targets = yearOffers.filter(o => o.committed_to === null).sort((a, b) => (b.stars || 0) - (a.stars || 0));
+  const lost = yearOffers.filter(o => o.committed_to !== null && o.committed_to !== selectedSchool.id).sort((a, b) => (b.stars || 0) - (a.stars || 0));
+
+  const tabData = { commits, targets, lost };
+  const tabCounts = { commits: commits.length, targets: targets.length, lost: lost.length };
+
+  // Update tab labels with counts
+  document.querySelectorAll(".panel-tab").forEach(btn => {
+    const t = btn.dataset.tab;
+    btn.textContent = `${t.charAt(0).toUpperCase() + t.slice(1)} (${tabCounts[t]})`;
+    btn.classList.toggle("active", t === playersTab);
+  });
+
+  const players = tabData[playersTab] || [];
+  const yearLabel = year === "all" ? "All Years" : `${yearNum} Class`;
+  playersTitle.textContent = `${selectedSchool.name} · ${yearLabel}`;
+
+  if (playersTab === "commits") {
+    playersList.innerHTML = players.map(r => {
+      const color = STAR_COLOR[r.stars] || STAR_COLOR[0];
+      return `<div class="player-row">
+        <div class="player-star-dot" style="background:${color}"></div>
+        <div class="player-name-pos"><span class="player-name">${r.name}</span><span class="player-pos">${r.position}</span></div>
+        <div class="player-hometown">${r.hometown_city}, ${r.hometown_state}</div>
+        <span class="player-year">${r.year}</span>
+      </div>`;
+    }).join("");
+  } else if (playersTab === "targets") {
+    playersList.innerHTML = !isPipeline
+      ? `<div class="player-row"><span style="color:#8b949e;font-size:12px;padding:8px 0">Select a 2026+ class year to see targets</span></div>`
+      : players.map(r => {
+        const color = STAR_COLOR[r.stars] || STAR_COLOR[0];
+        return `<div class="player-row">
+          <div class="player-star-dot" style="background:${color}"></div>
+          <div class="player-name-pos"><span class="player-name">${r.name}</span><span class="player-pos">${r.position}</span></div>
+          <div class="player-hometown">${r.hometown_city || "—"}, ${r.hometown_state || "—"}</div>
+          <span class="player-year">${r.year}</span>
+        </div>`;
+      }).join("");
+  } else {
+    playersList.innerHTML = !isPipeline
+      ? `<div class="player-row"><span style="color:#8b949e;font-size:12px;padding:8px 0">Select a 2026+ class year to see lost offers</span></div>`
+      : players.map(r => {
+        const color = STAR_COLOR[r.stars] || STAR_COLOR[0];
+        return `<div class="player-row">
+          <div class="player-star-dot" style="background:${color}"></div>
+          <div class="player-name-pos"><span class="player-name">${r.name}</span><span class="player-pos">${r.position}</span></div>
+          <div class="player-hometown">${r.hometown_city || "—"}, ${r.hometown_state || "—"}</div>
+          <span class="player-commit">${r.committed_to || ""}</span>
+        </div>`;
+      }).join("");
+  }
+}
+
+// ── Player mode: state panel ──────────────────────────────
+function openStatePanel(stateName) {
+  closeFeedback();
+  selectedState = stateName;
+  selectedPlayer = null;
+  playersTabs.style.display = "none";
+  playerBackStrip.classList.remove("visible");
+
+  const abbrev = STATE_NAME_TO_ABBREV[stateName];
+  const yearNum = parseInt(selectedYear);
+  const validYear = !isNaN(yearNum) && PIPELINE_YEARS.includes(yearNum);
+
+  let players;
+  if (validYear) {
+    players = allPlayers.filter(p => p.committed_to === null && p.year === yearNum && p.hometown_state === abbrev);
+  } else {
+    // For "all" or non-pipeline year, show all uncommitted across pipeline years
+    players = allPlayers.filter(p => p.committed_to === null && PIPELINE_YEARS.includes(p.year) && p.hometown_state === abbrev);
+  }
+  players.sort((a, b) => (b.stars || 0) - (a.stars || 0) || (a.ranking || 9999) - (b.ranking || 9999));
+
+  const yearLabel = validYear ? `${yearNum} Class` : "All Pipeline Years";
+  playersTitle.textContent = `${stateName} · ${players.length} uncommitted (${yearLabel})`;
+
+  playersList.innerHTML = players.length === 0
+    ? `<div class="player-row"><span style="color:#8b949e;font-size:12px">No uncommitted recruits found for this state/year.</span></div>`
+    : players.map(r => {
+      const color = STAR_COLOR[r.stars] || STAR_COLOR[0];
+      const offerCount = playerOffers[`${r.name}|${r.year}`]?.length ?? null;
+      return `<div class="player-row tappable" data-name="${encodeURIComponent(r.name)}" data-year="${r.year}">
+        <div class="player-star-dot" style="background:${color}"></div>
+        <div class="player-name-pos"><span class="player-name">${r.name}</span><span class="player-pos">${r.position}</span></div>
+        <div class="player-hometown">${r.hometown_city}, ${r.hometown_state}</div>
+        <span class="player-year">${offerCount !== null ? `${offerCount} offers` : r.year}</span>
+      </div>`;
+    }).join("");
+
+  // Tap-to-select player
+  playersList.querySelectorAll(".player-row.tappable").forEach(el => {
+    el.addEventListener("click", () => {
+      const name = decodeURIComponent(el.dataset.name);
+      const year = parseInt(el.dataset.year);
+      const player = players.find(p => p.name === name && p.year === year);
+      if (player) openPlayerArcs(player);
+    });
+  });
+
+  playersPanel.classList.add("open");
+  applyPlayerModeDots("dimmed");
+
+  // Highlight selected state
+  stateLayer.selectAll("path.state-hit")
+    .classed("pm-selected", d => d.properties.name === stateName);
+}
+
+// ── Player mode: player arc view ──────────────────────────
+function openPlayerArcs(player) {
+  selectedPlayer = player;
+  playersTabs.style.display = "none";
+  playerBackStrip.classList.add("visible");
+
+  const stars = player.stars || 0;
+  const starStr = "★".repeat(stars) + "☆".repeat(Math.max(0, 5 - stars));
+  playerBackName.textContent = player.name;
+  playerBackMeta.textContent = `${starStr} · ${player.position} · ${player.hometown_city}, ${player.hometown_state}`;
+
+  const key = `${player.name}|${player.year}`;
+  const offeringSchoolNames = playerOffers[key] ?? [];
+
+  playersList.innerHTML = offeringSchoolNames.length === 0
+    ? `<div class="player-row"><span style="color:#8b949e;font-size:12px">No offer data available for this player.</span></div>`
+    : offeringSchoolNames.sort().map(sName => {
+      const s = schoolMap[sName];
+      const isCommit = sName === player.committed_to;
+      const conf = s?.conference ?? "";
+      return `<div class="player-row" style="${isCommit ? "background:rgba(210,153,34,0.08)" : ""}">
+        <div class="player-star-dot" style="background:${isCommit ? "#d29922" : "#388bfd"}"></div>
+        <div class="player-name-pos">
+          <span class="player-name" style="${isCommit ? "color:#d29922" : ""}">${sName}</span>
+          <span class="player-pos">${conf}</span>
+        </div>
+        ${isCommit ? '<span class="player-commit">✓ Committed</span>' : ""}
+      </div>`;
+    }).join("");
+
+  // Draw arcs on map
+  clearArcs();
+  const homePt = projection([player.lng, player.lat]);
+  if (!homePt) return;
+
+  const arcGroup = arcLayer.append("g");
+
+  // Reset all school dots to dimmed, then light up offering schools
+  schoolLayer.selectAll("circle.school-dot")
+    .attr("class", "school-dot pm-dim");
+
+  const offerPts = [homePt];
+
+  offeringSchoolNames.forEach((sName, i) => {
+    const s = schoolMap[sName];
+    if (!s) return;
+    const sPt = jitteredPositions[s.id] ?? projection([s.lng, s.lat]);
+    if (!sPt) return;
+    offerPts.push(sPt);
+
+    const isCommit = sName === player.committed_to;
+    const color = isCommit ? "#d29922" : "#388bfd";
+    const strokeW = isCommit ? 1.5 : 1.0;
+    const opacity = isCommit ? 0.85 : 0.55;
+
+    const arc = drawAnimatedArc(arcGroup, homePt[0], homePt[1], sPt[0], sPt[1],
+      color, strokeW, opacity, null, i * 6);
+    arc.on("mousemove", ev => {
+         showTooltip(ev, `<strong>${sName}</strong><br>${s.conference || ""}${isCommit ? "<br><span style='color:#d29922'>✓ Committed</span>" : ""}`);
+         moveTooltip(ev);
+       })
+       .on("mouseleave touchend", hideTooltip);
+
+    // Light up school dot
+    schoolLayer.selectAll("g.school-group")
+      .filter(d => d.id === s.id)
+      .select("circle.school-dot")
+      .attr("class", isCommit ? "school-dot pm-committed" : "school-dot pm-lit");
+  });
+
+  // Hometown dot (prominent)
+  arcLayer.append("circle")
+    .attr("cx", homePt[0]).attr("cy", homePt[1])
+    .attr("r", 6).attr("fill", "#f0f6fc").attr("opacity", 0.9)
+    .attr("stroke", "#0d1117").attr("stroke-width", 1.5);
+  arcLayer.append("circle")
+    .attr("cx", homePt[0]).attr("cy", homePt[1])
+    .attr("r", 3).attr("fill", "#f0f6fc");
+
+  zoomToFit(offerPts);
+}
+
+function applyPlayerModeDots(state) {
+  if (state === "dimmed") {
+    schoolLayer.selectAll("circle.school-dot")
+      .attr("class", "school-dot pm-dim");
+  } else {
+    schoolLayer.selectAll("circle.school-dot")
+      .attr("class", "school-dot");
+  }
+}
+
+// ── Panel close ───────────────────────────────────────────
+function closePanel() {
+  playersPanel.classList.remove("open");
+  if (mode === "player") {
+    selectedState = null;
+    selectedPlayer = null;
+    stateLayer.selectAll("path.state-hit").classed("pm-selected", false);
+    clearArcs();
+    applyPlayerModeDots("dimmed");
+    playersTabs.style.display = "none";
+    playerBackStrip.classList.remove("visible");
+  }
+}
+function closeFeedback() {
+  document.getElementById("feedback-panel").classList.remove("open");
+}
+
+// ── Mode switching ────────────────────────────────────────
+function enterSchoolMode() {
+  if (mode === "school") return;
+  mode = "school";
+  document.getElementById("btn-school").classList.add("active");
+  document.getElementById("btn-player").classList.remove("active");
+
+  searchWrap.style.display = "";
+  hint.textContent = "Click a school dot or search to explore";
+  legendPipeline.style.display = "none";
+  legendLost.style.display = "none";
+
+  // Restore state paths (remove player mode interaction classes)
+  stateLayer.selectAll("path.state-hit")
+    .classed("pm-interactive", false)
+    .classed("pm-selected", false)
+    .attr("fill", "#161b22");
+
+  // Restore school dots
+  schoolLayer.selectAll("circle.school-dot").attr("class", "school-dot");
+
+  // Rebuild year select for school mode
+  rebuildYearSelect();
+  closePanel();
+
+  if (selectedSchool) {
+    drawArcs(selectedSchool, selectedYear);
+  } else {
+    clearArcs();
+  }
+
+  schoolBar.classList.toggle("visible", !!selectedSchool);
+}
+
+function enterPlayerMode() {
+  if (mode === "player") return;
+  mode = "player";
+  document.getElementById("btn-player").classList.add("active");
+  document.getElementById("btn-school").classList.remove("active");
+
+  searchWrap.style.display = "none";
+  schoolBar.classList.remove("visible");
+  legendPipeline.style.display = "none";
+  legendLost.style.display = "none";
+  clearArcs();
+
+  // Make state paths interactive
+  stateLayer.selectAll("path.state-hit")
+    .classed("pm-interactive", true);
+
+  // Dim school dots
+  applyPlayerModeDots("dimmed");
+
+  // Rebuild year select for player mode (pipeline years only)
+  rebuildYearSelect();
+  computeStateHeat(selectedYear);
+
+  hint.textContent = "Tap a state to browse uncommitted recruits";
+  closePanel();
+}
+
+function rebuildYearSelect() {
+  yearSelect.innerHTML = "";
+  if (mode === "school") {
+    const opt0 = document.createElement("option");
+    opt0.value = "all"; opt0.textContent = "All Years";
+    yearSelect.appendChild(opt0);
+    allYears.forEach(y => {
+      const opt = document.createElement("option");
+      opt.value = y; opt.textContent = `${y} Class`;
+      yearSelect.appendChild(opt);
+    });
+    yearSelect.value = selectedYear !== "all" && allYears.includes(+selectedYear)
+      ? selectedYear : (allYears[0] || "all");
+    selectedYear = yearSelect.value;
+  } else {
+    PIPELINE_YEARS.forEach(y => {
+      const opt = document.createElement("option");
+      opt.value = y; opt.textContent = `${y} Class`;
+      yearSelect.appendChild(opt);
+    });
+    // Default to first available pipeline year
+    const defaultY = PIPELINE_YEARS.find(y => allYears.includes(y)) || PIPELINE_YEARS[0];
+    yearSelect.value = String(defaultY);
+    selectedYear = String(defaultY);
+  }
+}
+
+// ── School search ─────────────────────────────────────────
+function renderSchoolList(query) {
+  const matches = schoolsList
+    .filter(s => s.name.toLowerCase().includes(query) || (s.abbreviation || "").toLowerCase().includes(query))
+    .slice(0, 12);
+  if (!matches.length) { schoolListEl.style.display = "none"; return; }
+  const rect = schoolSearch.getBoundingClientRect();
+  schoolListEl.style.top = (rect.bottom + 4) + "px";
+  schoolListEl.style.left = rect.left + "px";
+  schoolListEl.style.width = Math.max(rect.width, 240) + "px";
+  schoolListEl.style.display = "block";
+  schoolListEl.innerHTML = matches.map(s =>
+    `<div class="school-option" data-id="${s.id}">${s.name}<span class="school-conf">${s.conference || ""}</span></div>`
+  ).join("");
+  schoolListEl.querySelectorAll(".school-option").forEach(el => {
+    el.addEventListener("click", () => {
+      const school = schoolMap[el.dataset.id];
+      if (school) { schoolSearch.value = school.name; schoolListEl.style.display = "none"; selectSchool(school); }
+    });
+  });
+}
+
+function selectSchool(school) {
+  selectedSchool = school;
+  if (mode !== "school") enterSchoolMode();
+  closePanel();
+  drawArcs(school, selectedYear);
+}
+
+// ── Resize ────────────────────────────────────────────────
+function handleResize() {
+  if (!stateFeatures) return;
+  const [w, h] = getSize();
+  svg.call(zoom.transform, d3.zoomIdentity);
+  projection = buildProjection(w, h, stateFeatures);
+  pathGen = d3.geoPath().projection(projection);
+  computeJitteredPositions(schoolsList);
+  baseLayer.selectAll("path.state").attr("d", pathGen);
+  stateLayer.selectAll("path.state-hit").attr("d", pathGen);
+  schoolLayer.selectAll("g.school-group")
+    .attr("transform", d => { const pt = jitteredPositions[d.id] ?? [-999, -999]; return `translate(${pt[0]},${pt[1]})`; });
+  schoolLayer.selectAll("circle.school-dot").attr("r", dotRadius());
+  schoolLayer.selectAll("circle.school-hit").attr("r", hitRadius());
+  if (mode === "school" && selectedSchool) drawArcs(selectedSchool, selectedYear);
+  if (mode === "player") applyStateHeat();
+}
+
+// ── Feedback form ─────────────────────────────────────────
+(function initFeedback() {
+  const panel = document.getElementById("feedback-panel");
+  const btn = document.getElementById("feedback-btn");
+  const closeBtn = document.getElementById("feedback-close");
+  const desc = document.getElementById("feedback-desc");
+  const emailEl = document.getElementById("feedback-email");
+  const submit = document.getElementById("feedback-submit");
+  const status = document.getElementById("feedback-status");
+  const typeBtns = document.querySelectorAll(".fb-type-btn");
+  let selectedType = "Suggestion";
+
+  typeBtns.forEach(b => b.addEventListener("click", () => {
+    typeBtns.forEach(x => x.classList.remove("active"));
+    b.classList.add("active");
+    selectedType = b.dataset.type;
+  }));
+
+  function openFeedback() { closePanel(); panel.classList.add("open"); desc.focus(); }
+  function closeFb() { panel.classList.remove("open"); status.textContent = ""; status.className = ""; }
+
+  btn.addEventListener("click", openFeedback);
+  closeBtn.addEventListener("click", closeFb);
+  document.addEventListener("keydown", ev => { if (ev.key === "Escape") closeFb(); });
+
+  submit.addEventListener("click", async () => {
+    const text = desc.value.trim();
+    if (text.length < 5) { status.textContent = "Please add a bit more detail."; status.className = "err"; return; }
+    submit.disabled = true;
+    status.textContent = "Submitting…";
+    status.className = "";
+    try {
+      const resp = await fetch(FEEDBACK_WORKER, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: selectedType, description: text,
+          email: emailEl.value.trim() || null,
+          school: selectedSchool?.name || null,
+          year: selectedYear !== "all" ? selectedYear : null,
+          ua: navigator.userAgent, viewport: `${window.innerWidth}×${window.innerHeight}`,
+        }),
+      });
+      if (resp.ok) {
+        const { number } = await resp.json();
+        status.textContent = `Thanks! Logged as #${number}.`;
+        status.className = "ok";
+        desc.value = ""; emailEl.value = "";
+        setTimeout(closeFb, 2200);
+      } else {
+        status.textContent = "Something went wrong — try again.";
+        status.className = "err";
+        submit.disabled = false;
+      }
+    } catch {
+      status.textContent = "Network error — try again.";
+      status.className = "err";
+      submit.disabled = false;
+    }
+  });
+})();
+
+// ── About modal ───────────────────────────────────────────
+(function initAbout() {
+  const overlay = document.getElementById("about-overlay");
+  document.getElementById("about-btn").addEventListener("click", () => overlay.classList.add("open"));
+  document.getElementById("about-close").addEventListener("click", () => overlay.classList.remove("open"));
+  overlay.addEventListener("click", ev => { if (ev.target === overlay) overlay.classList.remove("open"); });
+})();
+
+// ── Welcome tip ───────────────────────────────────────────
+(function initWelcomeTip() {
+  const tip = document.getElementById("welcome-tip");
+  if (localStorage.getItem("cfb-pipeline-welcome-seen")) { tip.remove(); return; }
+  document.getElementById("welcome-tip-dismiss").addEventListener("click", () => {
+    tip.classList.add("hidden");
+    localStorage.setItem("cfb-pipeline-welcome-seen", "1");
+    setTimeout(() => tip.remove(), 400);
+  });
+  setTimeout(() => {
+    if (!tip.isConnected) return;
+    tip.classList.add("hidden");
+    localStorage.setItem("cfb-pipeline-welcome-seen", "1");
+    setTimeout(() => tip.remove(), 400);
+  }, 14000);
+})();
+
+// ── Bootstrap ─────────────────────────────────────────────
+Promise.all([
+  d3.json(`${DATA_BASE}/schools.json`),
+  d3.json(`${DATA_BASE}/players.json`),
+  d3.json(`${DATA_BASE}/player_offers.json`).catch(() => ({})),
+  d3.json(`${DATA_BASE}/us-states.topojson`),
+]).then(([schools, players, pOffers, us]) => {
+  allPlayers = players;
+  schoolsList = schools;
+  playerOffers = pOffers || {};
+  schools.forEach(s => { schoolMap[s.id] = s; });
+
+  stateFeatures = topojson.feature(us, us.objects.states);
+
+  const [w, h] = getSize();
+  projection = buildProjection(w, h, stateFeatures);
+  pathGen = d3.geoPath().projection(projection);
+  computeJitteredPositions(schools);
+
+  // Derive all years in data
+  allYears = [...new Set(players.map(r => r.year))].sort((a, b) => b - a);
+
+  // Draw state base paths
+  baseLayer.selectAll("path.state")
+    .data(stateFeatures.features)
+    .join("path")
+    .attr("class", "state")
+    .attr("d", pathGen);
+
+  // Draw invisible interactive state hit areas
+  stateLayer.selectAll("path.state-hit")
+    .data(stateFeatures.features)
+    .join("path")
+    .attr("class", "state state-hit")
+    .attr("fill", "#161b22")
+    .attr("stroke", "none")
+    .attr("stroke-width", 0)
+    .attr("cursor", "default")
+    .on("click", (ev, d) => {
+      if (mode !== "player") return;
+      openStatePanel(d.properties.name);
+    })
+    .on("mousemove", (ev, d) => {
+      if (mode !== "player") return;
+      const abbrev = STATE_NAME_TO_ABBREV[d.properties.name];
+      const count = stateHeat[abbrev]
+        ? allPlayers.filter(p => p.committed_to === null && p.hometown_state === abbrev && (parseInt(selectedYear) ? p.year === parseInt(selectedYear) : PIPELINE_YEARS.includes(p.year))).length
+        : 0;
+      if (count > 0) showTooltip(ev, `<strong>${d.properties.name}</strong><br>${count} uncommitted recruit${count !== 1 ? "s" : ""}`);
+    })
+    .on("mouseleave", hideTooltip);
+
+  // Draw school dots
+  const schoolGroups = schoolLayer.selectAll("g.school-group")
+    .data(schools)
+    .join("g")
+    .attr("class", "school-group")
+    .attr("transform", d => {
+      const pt = jitteredPositions[d.id] ?? [-999, -999];
+      return `translate(${pt[0]},${pt[1]})`;
+    })
+    .on("click", (ev, d) => {
+      if (mode === "player") {
+        // In player mode, clicking a lit school dot from player arc view does nothing
+        // (we don't auto-switch modes on school dot click in player mode)
+        return;
+      }
+      schoolSearch.value = d.name;
+      schoolListEl.style.display = "none";
+      selectSchool(d);
+    });
+
+  schoolGroups.append("circle").attr("class", "school-dot").attr("r", dotRadius());
+  schoolGroups.append("circle").attr("class", "school-hit").attr("r", hitRadius()).attr("fill", "transparent");
+  schoolGroups.append("title").text(d => d.name);
+
+  // Build year select (school mode default)
+  rebuildYearSelect();
+  if (allYears.length) {
+    selectedYear = String(allYears[0]);
+    yearSelect.value = selectedYear;
+  }
+
+  // Year change
+  yearSelect.addEventListener("change", () => {
+    selectedYear = yearSelect.value;
+    if (mode === "school" && selectedSchool) drawArcs(selectedSchool, selectedYear);
+    if (mode === "player") {
+      computeStateHeat(selectedYear);
+      if (selectedState) openStatePanel(selectedState);
+    }
+  });
+
+  // School search
+  schoolSearch.addEventListener("input", () => {
+    const q = schoolSearch.value.toLowerCase().trim();
+    if (!q) { schoolListEl.style.display = "none"; return; }
+    renderSchoolList(q);
+  });
+  schoolSearch.addEventListener("keydown", ev => { if (ev.key === "Escape") schoolListEl.style.display = "none"; });
+
+  // Mode buttons
+  document.getElementById("btn-school").addEventListener("click", enterSchoolMode);
+  document.getElementById("btn-player").addEventListener("click", enterPlayerMode);
+
+  // Players panel
+  document.getElementById("players-close").addEventListener("click", closePanel);
+  schoolBarCounts.addEventListener("click", () => { if (selectedSchool) openSchoolPanel(); });
+  schoolBarCounts.addEventListener("touchend", ev => { if (!selectedSchool) return; ev.preventDefault(); openSchoolPanel(); });
+
+  // Panel tabs
+  document.querySelectorAll(".panel-tab").forEach(btn => {
+    btn.addEventListener("click", () => {
+      playersTab = btn.dataset.tab;
+      renderSchoolPanel();
+    });
+  });
+
+  // Player back button
+  document.getElementById("player-back-btn").addEventListener("click", () => {
+    selectedPlayer = null;
+    playerBackStrip.classList.remove("visible");
+    clearArcs();
+    applyPlayerModeDots("dimmed");
+    if (selectedState) openStatePanel(selectedState);
+  });
+
+  // Global click dismissal
+  document.addEventListener("click", ev => {
+    if (!schoolSearch.contains(ev.target) && !schoolListEl.contains(ev.target))
+      schoolListEl.style.display = "none";
+    if (playersPanel.classList.contains("open") &&
+        !playersPanel.contains(ev.target) &&
+        !schoolBar.contains(ev.target) &&
+        !document.getElementById("feedback-btn").contains(ev.target))
+      closePanel();
+  });
+
+  document.addEventListener("keydown", ev => {
+    if (ev.key === "Escape") { schoolListEl.style.display = "none"; closePanel(); }
+  });
+
+  let resizeTimer;
+  window.addEventListener("resize", () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(handleResize, 150);
+  });
+}).catch(err => {
+  console.error("Failed to load map data:", err);
+  document.getElementById("map-container").innerHTML =
+    `<p style="color:#ff7b72;padding:20px;font-size:14px">Failed to load map data. Run the data pipeline first, then serve this directory locally.</p>`;
+});
+</script>
+</body>
+</html>
