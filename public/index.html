@@ -884,17 +884,15 @@ function drawAnimatedArc(group, sx, sy, tx, ty, color, strokeW, opacity, dashArr
     .attr("stroke", color)
     .attr("stroke-width", strokeW)
     .attr("opacity", opacity);
-  if (dashArray) el.style("stroke-dasharray", dashArray);
 
   const totalLength = el.node().getTotalLength();
-  el.style("stroke-dasharray", dashArray
-    ? `${dashArray}, ${totalLength}`
-    : `${totalLength} ${totalLength}`)
+  // Animate draw-in using the offset trick, then apply dash pattern at end
+  el.style("stroke-dasharray", `${totalLength} ${totalLength}`)
     .style("stroke-dashoffset", totalLength)
     .transition().duration(400).delay(delay).ease(d3.easeQuadOut)
-    .style("stroke-dashoffset", 0);
+    .style("stroke-dashoffset", 0)
+    .on("end", () => { if (dashArray) el.style("stroke-dasharray", dashArray); });
 
-  if (!dashArray) el.style("stroke-dasharray", null);
   return el;
 }
 
