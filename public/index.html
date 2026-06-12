@@ -531,17 +531,59 @@
     #welcome-tip-dismiss { display: inline-block; margin-top: 10px; background: #21262d; border: 1px solid #30363d; color: #8b949e; border-radius: 6px; padding: 4px 14px; font-size: 12px; cursor: pointer; }
     #welcome-tip-dismiss:hover { color: #f0f6fc; }
 
+    #version-tag {
+      position: absolute;
+      bottom: 8px; left: 10px;
+      font-size: 10px;
+      color: rgba(139,148,158,0.35);
+      pointer-events: none;
+      letter-spacing: 0.04em;
+      z-index: 5;
+    }
+
+    /* ── Prospect dots (player mode) ──────────────────────── */
+    .prospect-dot {
+      cursor: pointer;
+      pointer-events: all;
+    }
+    .prospect-dot:hover { opacity: 1 !important; }
+
+    /* ── Player mode: smaller panel so map stays visible ──── */
+    body.player-mode #players-panel { max-height: 42vh; }
+
     /* ── Mobile ───────────────────────────────────────────── */
     @media (max-width: 600px) {
       #app-title { display: none; }
-      .search-wrap { max-width: none; }
+      .search-wrap { display: none; }
       #info-bar { display: none; }
-      #map-container { bottom: env(safe-area-inset-bottom, 0px); }
+
+      #about-btn { display: none; }
+
+      /* Two-row controls: year+mode on row 1, arc filter on row 2 */
+      #controls {
+        height: auto;
+        min-height: 52px;
+        flex-wrap: wrap;
+        padding: 7px 10px;
+        row-gap: 4px;
+        align-items: center;
+      }
+      #year-select { flex: 1; min-width: 90px; }
+      .arc-filter {
+        flex: 0 0 100%;
+        display: flex;
+      }
+      .arc-filter-btn { flex: 1; text-align: center; }
+
+      /* Map and school bar shift down for two-row controls */
+      #map-container { top: 84px; bottom: env(safe-area-inset-bottom, 0px); }
+      #school-bar { top: 84px; }
+
+      /* Player mode: arc filter hidden → one row → map shifts back up */
+      body.player-mode #map-container { top: 52px; }
+
       #players-panel, #feedback-panel { bottom: env(safe-area-inset-bottom, 0px); }
       #feedback-btn { bottom: calc(10px + env(safe-area-inset-bottom, 0px)); }
-    }
-    @media (max-width: 420px) {
-      .search-wrap { max-width: 120px; }
     }
   </style>
 </head>
@@ -573,6 +615,7 @@
 
 <div id="map-container">
   <svg id="map"></svg>
+  <div id="version-tag">v1.5.0</div>
 </div>
 
 <div id="tooltip"></div>
@@ -677,6 +720,18 @@ const PIPELINE_YEARS = [2026, 2027, 2028];
 const STAR_COLOR = { 5: "#d29922", 4: "#388bfd", 3: "#3fb950", 2: "#8b949e", 1: "#8b949e", 0: "#8b949e" };
 const STAR_CLASS = { 5: "stars-gold", 4: "stars-blue", 3: "stars-green", 2: "stars-gray", 1: "stars-gray", 0: "stars-gray" };
 
+// Derive stars from 247 composite rating when CFBD stars not available
+function playerStars(p) {
+  if (p.stars) return p.stars;
+  const r = p.rating_247;
+  if (!r) return 0;
+  if (r >= 0.98) return 5;
+  if (r >= 0.93) return 4;
+  if (r >= 0.85) return 3;
+  if (r >= 0.75) return 2;
+  return 1;
+}
+
 // Maps TopoJSON state full name → 2-letter abbreviation
 const STATE_NAME_TO_ABBREV = {
   "Alabama":"AL","Alaska":"AK","Arizona":"AZ","Arkansas":"AR","California":"CA",
@@ -744,6 +799,7 @@ const baseLayer = zoomLayer.append("g").attr("class", "base-layer");
 const stateLayer = zoomLayer.append("g").attr("class", "state-interact-layer");
 const schoolLayer = zoomLayer.append("g").attr("class", "school-layer");
 let arcLayer = zoomLayer.insert("g", ".school-layer").attr("class", "arc-layer");
+let prospectLayer = null;
 
 // ── Zoom ──────────────────────────────────────────────────
 let currentZoom = 1;
@@ -880,7 +936,7 @@ function computeStateHeat(year) {
   );
   players.forEach(p => {
     if (!p.hometown_state) return;
-    counts[p.hometown_state] = (counts[p.hometown_state] || 0) + Math.max(p.stars || 1, 1);
+    counts[p.hometown_state] = (counts[p.hometown_state] || 0) + Math.max(playerStars(p) || 1, 1);
   });
   const max = Math.max(...Object.values(counts), 1);
   stateHeat = Object.fromEntries(Object.entries(counts).map(([k, v]) => [k, v / max]));
@@ -889,7 +945,8 @@ function computeStateHeat(year) {
 
 function stateHeatColor(abbrev) {
   const v = stateHeat[abbrev] || 0;
-  return v > 0 ? d3.interpolateRgb("#161b22", "#1d3a5f")(v * 0.85) : "#161b22";
+  if (v === 0) return "#161b22";
+  return d3.interpolateRgb("#1a2333", "#1a72cc")(Math.pow(v, 0.5));
 }
 
 function applyStateHeat() {
@@ -904,6 +961,36 @@ function applyStateHeat() {
 function clearArcs() {
   arcLayer.remove();
   arcLayer = zoomLayer.insert("g", ".school-layer").attr("class", "arc-layer");
+}
+
+// ── Prospect dots (player mode) ───────────────────────────
+function drawProspectDots(players) {
+  clearProspectDots();
+  prospectLayer = zoomLayer.insert("g", ".arc-layer").attr("class", "prospect-layer");
+  const baseR = Math.max(1.8, Math.min(3.2, getSize()[0] / 200));
+
+  prospectLayer.selectAll("circle.prospect-dot")
+    .data(players.filter(p => p.lat && p.lng))
+    .join("circle")
+    .attr("class", "prospect-dot")
+    .attr("cx", d => { const pt = projection([d.lng, d.lat]); return pt ? pt[0] : -9999; })
+    .attr("cy", d => { const pt = projection([d.lng, d.lat]); return pt ? pt[1] : -9999; })
+    .attr("r", d => baseR * (0.75 + (playerStars(d) || 0) * 0.06))
+    .attr("fill", d => STAR_COLOR[playerStars(d)] || STAR_COLOR[0])
+    .attr("opacity", 0.55)
+    .on("click", (ev, d) => { ev.stopPropagation(); openPlayerArcs(d); })
+    .on("touchend", (ev, d) => { ev.preventDefault(); ev.stopPropagation(); openPlayerArcs(d); })
+    .on("mousemove", (ev, d) => {
+      const stars = playerStars(d);
+      const starStr = "★".repeat(stars) + "☆".repeat(Math.max(0, 5 - stars));
+      showTooltip(ev, `<strong>${d.name}</strong><br><span class="${STAR_CLASS[stars]}">${starStr}</span> ${d.position}<br>${d.hometown_city}, ${d.hometown_state}`);
+      moveTooltip(ev);
+    })
+    .on("mouseleave touchend", hideTooltip);
+}
+
+function clearProspectDots() {
+  if (prospectLayer) { prospectLayer.remove(); prospectLayer = null; }
 }
 
 // ── Draw arcs: school mode ────────────────────────────────
@@ -943,6 +1030,9 @@ async function drawArcs(school, year) {
   let commits = allPlayers.filter(r => r.school_id === school.id);
   if (year !== "all") commits = commits.filter(r => r.year === yearNum);
 
+  // Start offer fetch immediately so it runs in parallel with commit rendering
+  const offerFetchPromise = isPipeline ? loadSchoolOffers(school) : Promise.resolve(null);
+
   const dashedLayer = arcLayer.append("g");
   const solidLayer = arcLayer.append("g");
   const dotLayer = arcLayer.append("g");
@@ -976,10 +1066,10 @@ async function drawArcs(school, year) {
   // Update school bar counts (commits only for now, pipeline filled after load)
   updateSchoolBar(school, commits.length, null, null);
 
-  // Pipeline arcs: load offers, then draw
+  // Pipeline arcs: await the fetch that already started above
   if (isPipeline) {
     legendPipeline.style.display = "";
-    const offerData = await loadSchoolOffers(school);
+    const offerData = await offerFetchPromise;
     stateLoadedOffers = offerData;
     const yearOffers = offerData?.[String(yearNum)] ?? [];
 
@@ -1111,46 +1201,29 @@ function renderSchoolPanel() {
   }
 }
 
-// ── Player mode: state panel ──────────────────────────────
-function openStatePanel(stateName) {
-  closeFeedback();
-  selectedState = stateName;
-  selectedPlayer = null;
-  playersTabs.style.display = "none";
-  playerBackStrip.classList.remove("visible");
+// ── Player mode: shared prospect row renderer ─────────────
+function renderProspectRows(players, showState) {
+  if (players.length === 0)
+    return `<div class="player-row"><span style="color:#8b949e;font-size:12px">No recruits found.</span></div>`;
+  return players.map(r => {
+    const stars = playerStars(r);
+    const color = STAR_COLOR[stars] || STAR_COLOR[0];
+    const offerCount = playerOffers[`${r.name}|${r.year}`]?.length ?? null;
+    const committed = r.committed_to ? `<span class="player-commit">→ ${r.committed_to}</span>` : "";
+    const location = showState ? `${r.hometown_city || "—"}, ${r.hometown_state}` : `${r.hometown_city || "—"}, ${r.hometown_state}`;
+    return `<div class="player-row tappable" data-name="${encodeURIComponent(r.name)}" data-year="${r.year}">
+      <div class="player-star-dot" style="${r.committed_to ? `background:${color}` : `background:none;border:2px solid ${color};border-radius:50%`}"></div>
+      <div class="player-name-pos"><span class="player-name">${r.name}</span><span class="player-pos">${r.position}</span></div>
+      <div class="player-hometown">${location}</div>
+      ${committed || `<span class="player-year">${offerCount !== null ? `${offerCount} offers` : r.year}</span>`}
+    </div>`;
+  }).join("");
+}
 
-  const abbrev = STATE_NAME_TO_ABBREV[stateName];
-  const yearNum = parseInt(selectedYear);
-  const validYear = !isNaN(yearNum) && PIPELINE_YEARS.includes(yearNum);
-
-  let players;
-  if (validYear) {
-    players = pipelinePlayers.filter(p => p.year === yearNum && p.hometown_state === abbrev);
-  } else {
-    players = pipelinePlayers.filter(p => PIPELINE_YEARS.includes(p.year) && p.hometown_state === abbrev);
-  }
-  players.sort((a, b) => (b.stars || 0) - (a.stars || 0) || (a.ranking || 9999) - (b.ranking || 9999));
-
-  const yearLabel = validYear ? `${yearNum} Class` : "All Pipeline Years";
-  playersTitle.textContent = `${stateName} · ${players.length} prospect${players.length !== 1 ? "s" : ""} (${yearLabel})`;
-
-  playersList.innerHTML = players.length === 0
-    ? `<div class="player-row"><span style="color:#8b949e;font-size:12px">No recruits found for this state/year.</span></div>`
-    : players.map(r => {
-      const color = STAR_COLOR[r.stars] || STAR_COLOR[0];
-      const offerCount = playerOffers[`${r.name}|${r.year}`]?.length ?? null;
-      const committed = r.committed_to ? `<span class="player-commit">→ ${r.committed_to}</span>` : "";
-      return `<div class="player-row tappable" data-name="${encodeURIComponent(r.name)}" data-year="${r.year}">
-        <div class="player-star-dot" style="${r.committed_to ? `background:${color}` : `background:none;border:2px solid ${color};border-radius:50%`}"></div>
-        <div class="player-name-pos"><span class="player-name">${r.name}</span><span class="player-pos">${r.position}</span></div>
-        <div class="player-hometown">${r.hometown_city}, ${r.hometown_state}</div>
-        ${committed || `<span class="player-year">${offerCount !== null ? `${offerCount} offers` : r.year}</span>`}
-      </div>`;
-    }).join("");
-
-  // Tap-to-select player
+function wireProspectClicks(players) {
   playersList.querySelectorAll(".player-row.tappable").forEach(el => {
-    el.addEventListener("click", () => {
+    el.addEventListener("click", ev => {
+      ev.stopPropagation();
       const name = decodeURIComponent(el.dataset.name);
       const year = parseInt(el.dataset.year);
       const player = players.find(p => p.name === name && p.year === year)
@@ -1158,11 +1231,65 @@ function openStatePanel(stateName) {
       if (player) openPlayerArcs(player);
     });
   });
+}
 
+// ── Player mode: all prospects panel ─────────────────────
+function openAllProspectsPanel() {
+  closeFeedback();
+  selectedState = null;
+  selectedPlayer = null;
+  playersTabs.style.display = "none";
+  playerBackStrip.classList.remove("visible");
+  stateLayer.selectAll("path.state-hit").classed("pm-selected", false);
+  clearArcs();
+  applyPlayerModeDots("dimmed");
+
+  const yearNum = parseInt(selectedYear);
+  const validYear = !isNaN(yearNum) && PIPELINE_YEARS.includes(yearNum);
+  let players = (validYear
+    ? pipelinePlayers.filter(p => p.year === yearNum)
+    : pipelinePlayers.filter(p => PIPELINE_YEARS.includes(p.year))
+  ).slice().sort((a, b) => (b.stars || 0) - (a.stars || 0));
+
+  const yearLabel = validYear ? `${yearNum} Class` : "All Pipeline Years";
+  playersTitle.textContent = `Pipeline · ${players.length} prospects (${yearLabel})`;
+
+  playersList.innerHTML = renderProspectRows(players, true);
+  wireProspectClicks(players);
+  drawProspectDots(players);
+  playersPanel.classList.add("open");
+}
+
+// ── Player mode: state filter panel ──────────────────────
+function openStatePanel(stateName) {
+  closeFeedback();
+  selectedState = stateName;
+  selectedPlayer = null;
+  playersTabs.style.display = "none";
+
+  // Back strip for "← All Prospects" navigation
+  playerBackStrip.classList.add("visible");
+  playerBackName.textContent = "All Prospects";
+  playerBackMeta.textContent = "";
+
+  const abbrev = STATE_NAME_TO_ABBREV[stateName];
+  const yearNum = parseInt(selectedYear);
+  const validYear = !isNaN(yearNum) && PIPELINE_YEARS.includes(yearNum);
+
+  let players = (validYear
+    ? pipelinePlayers.filter(p => p.year === yearNum && p.hometown_state === abbrev)
+    : pipelinePlayers.filter(p => PIPELINE_YEARS.includes(p.year) && p.hometown_state === abbrev)
+  ).slice().sort((a, b) => (b.stars || 0) - (a.stars || 0));
+
+  const yearLabel = validYear ? `${yearNum} Class` : "All Pipeline Years";
+  playersTitle.textContent = `${stateName} · ${players.length} prospect${players.length !== 1 ? "s" : ""} (${yearLabel})`;
+
+  playersList.innerHTML = renderProspectRows(players, false);
+  wireProspectClicks(players);
+  drawProspectDots(players);
   playersPanel.classList.add("open");
   applyPlayerModeDots("dimmed");
 
-  // Highlight selected state
   stateLayer.selectAll("path.state-hit")
     .classed("pm-selected", d => d.properties.name === stateName);
 }
@@ -1181,16 +1308,22 @@ function openPlayerArcs(player) {
   const key = `${player.name}|${player.year}`;
   const offeringSchoolNames = playerOffers[key] ?? [];
 
+  clearProspectDots();
+
   playersList.innerHTML = offeringSchoolNames.length === 0
     ? `<div class="player-row"><span style="color:#8b949e;font-size:12px">No offer data available for this player.</span></div>`
     : offeringSchoolNames.sort().map(sName => {
       const s = schoolMap[sName];
       const isCommit = sName === player.committed_to;
       const conf = s?.conference ?? "";
+      const href = s?.slug_247 ? `https://247sports.com/college/${s.slug_247}/` : null;
+      const nameEl = href
+        ? `<a class="player-name" href="${href}" target="_blank" rel="noopener" style="${isCommit ? "color:#d29922" : ""}">${sName}</a>`
+        : `<span class="player-name" style="${isCommit ? "color:#d29922" : ""}">${sName}</span>`;
       return `<div class="player-row" style="${isCommit ? "background:rgba(210,153,34,0.08)" : ""}">
         <div class="player-star-dot" style="background:${isCommit ? "#d29922" : "#388bfd"}"></div>
         <div class="player-name-pos">
-          <span class="player-name" style="${isCommit ? "color:#d29922" : ""}">${sName}</span>
+          ${nameEl}
           <span class="player-pos">${conf}</span>
         </div>
         ${isCommit ? '<span class="player-commit">✓ Committed</span>' : ""}
@@ -1280,6 +1413,7 @@ function closeFeedback() {
 function enterSchoolMode() {
   if (mode === "school") return;
   mode = "school";
+  document.body.classList.remove("player-mode");
   document.getElementById("btn-school").classList.add("active");
   document.getElementById("btn-player").classList.remove("active");
 
@@ -1295,12 +1429,13 @@ function enterSchoolMode() {
     .classed("pm-selected", false)
     .attr("fill", "#161b22");
 
-  // Restore school dots and hit circles
+  // Restore school layer interactivity and visual state
+  schoolLayer.style("pointer-events", null);
   schoolLayer.selectAll("circle.school-dot").attr("class", "school-dot");
-  schoolLayer.selectAll("circle.school-hit").classed("pm-inactive", false);
 
   // Rebuild year select for school mode
   rebuildYearSelect();
+  clearProspectDots();
   closePanel();
 
   if (selectedSchool) {
@@ -1315,6 +1450,7 @@ function enterSchoolMode() {
 function enterPlayerMode() {
   if (mode === "player") return;
   mode = "player";
+  document.body.classList.add("player-mode");
   document.getElementById("btn-player").classList.add("active");
   document.getElementById("btn-school").classList.remove("active");
 
@@ -1325,11 +1461,10 @@ function enterPlayerMode() {
   legendLost.style.display = "none";
   clearArcs();
 
-  // Make state paths interactive; disable school hit circles so they don't block state clicks
+  // Make state paths interactive; disable entire school layer so nothing blocks state clicks
   stateLayer.selectAll("path.state-hit")
     .classed("pm-interactive", true);
-  schoolLayer.selectAll("circle.school-hit")
-    .classed("pm-inactive", true);
+  schoolLayer.style("pointer-events", "none");
 
   // Dim school dots
   applyPlayerModeDots("dimmed");
@@ -1338,8 +1473,9 @@ function enterPlayerMode() {
   rebuildYearSelect();
   computeStateHeat(selectedYear);
 
-  hint.textContent = "Tap a state to browse uncommitted recruits";
-  closePanel();
+  hint.textContent = "Tap a state to filter · tap a prospect for their offers";
+  // Auto-open panel with all prospects immediately
+  openAllProspectsPanel();
 }
 
 function rebuildYearSelect() {
@@ -1356,7 +1492,7 @@ function rebuildYearSelect() {
       yearSelect.appendChild(opt);
     });
     yearSelect.value = selectedYear !== "all" && schoolYears.includes(+selectedYear)
-      ? selectedYear : (schoolYears[0] || "all");
+      ? selectedYear : (allYears[0] ? String(allYears[0]) : "all");
     selectedYear = yearSelect.value;
   } else {
     PIPELINE_YEARS.forEach(y => {
@@ -1550,6 +1686,12 @@ Promise.all([
       ev.stopPropagation();
       openStatePanel(d.properties.name);
     })
+    .on("touchend", (ev, d) => {
+      if (mode !== "player") return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      openStatePanel(d.properties.name);
+    })
     .on("mousemove", (ev, d) => {
       if (mode !== "player") return;
       const abbrev = STATE_NAME_TO_ABBREV[d.properties.name];
@@ -1597,7 +1739,9 @@ Promise.all([
     if (mode === "school" && selectedSchool) drawArcs(selectedSchool, selectedYear);
     if (mode === "player") {
       computeStateHeat(selectedYear);
-      if (selectedState) openStatePanel(selectedState);
+      if (selectedPlayer) openPlayerArcs(selectedPlayer);
+      else if (selectedState) openStatePanel(selectedState);
+      else openAllProspectsPanel();
     }
   });
 
@@ -1636,19 +1780,27 @@ Promise.all([
   });
 
   // Player back button
-  document.getElementById("player-back-btn").addEventListener("click", () => {
-    selectedPlayer = null;
-    playerBackStrip.classList.remove("visible");
-    clearArcs();
-    applyPlayerModeDots("dimmed");
-    if (selectedState) openStatePanel(selectedState);
+  document.getElementById("player-back-btn").addEventListener("click", ev => {
+    ev.stopPropagation();
+    if (selectedPlayer) {
+      selectedPlayer = null;
+      clearArcs();
+      applyPlayerModeDots("dimmed");
+      if (selectedState) openStatePanel(selectedState);
+      else openAllProspectsPanel();
+    } else if (selectedState) {
+      openAllProspectsPanel();
+    } else {
+      playerBackStrip.classList.remove("visible");
+    }
   });
 
   // Global click dismissal
   document.addEventListener("click", ev => {
     if (!schoolSearch.contains(ev.target) && !schoolListEl.contains(ev.target))
       schoolListEl.style.display = "none";
-    if (playersPanel.classList.contains("open") &&
+    if (mode !== "player" &&
+        playersPanel.classList.contains("open") &&
         !playersPanel.contains(ev.target) &&
         !schoolBar.contains(ev.target) &&
         !document.getElementById("feedback-btn").contains(ev.target))
