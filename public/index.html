@@ -304,7 +304,7 @@
       z-index: 50;
       display: flex;
       flex-direction: column;
-      transform: translateY(100%);
+      transform: translateY(calc(100% + 40px));
       transition: transform 0.25s ease;
       box-shadow: 0 -4px 24px rgba(1, 4, 9, 0.6);
     }
@@ -615,7 +615,7 @@
 
 <div id="map-container">
   <svg id="map"></svg>
-  <div id="version-tag">v1.5.0</div>
+  <div id="version-tag">v1.5.1</div>
 </div>
 
 <div id="tooltip"></div>
@@ -725,10 +725,10 @@ function playerStars(p) {
   if (p.stars) return p.stars;
   const r = p.rating_247;
   if (!r) return 0;
-  if (r >= 0.98) return 5;
-  if (r >= 0.93) return 4;
-  if (r >= 0.85) return 3;
-  if (r >= 0.75) return 2;
+  if (r >= 95) return 5;
+  if (r >= 90) return 4;
+  if (r >= 80) return 3;
+  if (r >= 75) return 2;
   return 1;
 }
 
