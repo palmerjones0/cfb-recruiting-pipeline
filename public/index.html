@@ -579,8 +579,9 @@
       #map-container { top: 84px; bottom: env(safe-area-inset-bottom, 0px); }
       #school-bar { top: 84px; }
 
-      /* Player mode: arc filter hidden → one row → map shifts back up */
-      body.player-mode #map-container { top: 52px; }
+      /* Player mode: star filter shown (same height as arc filter) → stays at 84px */
+      body.player-mode #map-container { top: 84px; }
+      body.player-mode #school-bar { top: 84px; }
 
       #players-panel, #feedback-panel { bottom: env(safe-area-inset-bottom, 0px); }
       #feedback-btn { bottom: calc(10px + env(safe-area-inset-bottom, 0px)); }
@@ -605,6 +606,12 @@
     <button class="arc-filter-btn" data-filter="committed">Committed</button>
     <button class="arc-filter-btn" data-filter="offered">Offered</button>
   </div>
+  <div class="arc-filter hidden" id="star-filter">
+    <button class="arc-filter-btn active" data-stars="5">5★</button>
+    <button class="arc-filter-btn" data-stars="4">4★</button>
+    <button class="arc-filter-btn" data-stars="3">3★</button>
+    <button class="arc-filter-btn" data-stars="0">All</button>
+  </div>
   <button id="about-btn">About</button>
 </div>
 
@@ -615,7 +622,7 @@
 
 <div id="map-container">
   <svg id="map"></svg>
-  <div id="version-tag">v1.5.2</div>
+  <div id="version-tag">v1.5.3</div>
 </div>
 
 <div id="tooltip"></div>
@@ -741,19 +748,10 @@ const STATE_CENTROIDS_LL = {
   "WI":[44.6243,-89.9941],"WY":[42.9957,-107.5512],"DC":[38.9101,-77.0147],
 };
 
-// Return SVG [x,y] for a prospect; adds deterministic jitter if coordinates are a state centroid
-function prospectCoords(p) {
+// Returns true if the player's coords are a state centroid fallback (no real hometown data)
+function isCentroid(p) {
   const c = STATE_CENTROIDS_LL[p.hometown_state];
-  let lat = p.lat, lng = p.lng;
-  if (c && Math.abs(lat - c[0]) < 0.01 && Math.abs(lng - c[1]) < 0.01) {
-    let h = 0;
-    const key = p.name + p.year;
-    for (let i = 0; i < key.length; i++) h = (Math.imul(h, 31) + key.charCodeAt(i)) | 0;
-    h = Math.abs(h);
-    lat  += ((h & 0xFFFF) / 0x10000 - 0.5) * 2.5;
-    lng  += (((h >>> 16) & 0xFFFF) / 0x10000 - 0.5) * 4.0;
-  }
-  return projection([lng, lat]);
+  return c != null && Math.abs(p.lat - c[0]) < 0.01 && Math.abs(p.lng - c[1]) < 0.01;
 }
 
 // Derive stars from 247 composite rating when CFBD stars not available
@@ -792,6 +790,7 @@ let selectedState = null;
 let selectedPlayer = null;
 let playersTab = "commits";
 let arcFilter = "all"; // "all" | "committed" | "offered"
+let starFilter = 5;   // player mode star tier: 5|4|3|0 (0=all)
 
 // Data
 let allPlayers = [];
@@ -849,10 +848,11 @@ const zoom = d3.zoom()
       const r = hitRadius() / k;
       schoolLayer.selectAll("circle.school-hit").attr("r", r);
     }
-    // Keep school labels a constant ~9px on screen regardless of zoom level
+    // Keep school labels a constant ~9px on screen, offset above the dot at all zoom levels
+    const dotR = dotRadius();
     arcLayer.selectAll("text.school-label")
       .style("font-size", `${9 / k}px`)
-      .attr("y", function() { return +this.dataset.sy - 5 / k; });
+      .attr("y", function() { return +this.dataset.sy - (dotR + 5) / k; });
   });
 svg.call(zoom);
 svg.on("dblclick.zoom", null);
@@ -1010,11 +1010,11 @@ function drawProspectDots(players) {
   const baseR = Math.max(1.8, Math.min(3.2, getSize()[0] / 200));
 
   prospectLayer.selectAll("circle.prospect-dot")
-    .data(players.filter(p => p.lat && p.lng))
+    .data(players.filter(p => p.lat && p.lng && !isCentroid(p)))
     .join("circle")
     .attr("class", "prospect-dot")
-    .attr("cx", d => { const pt = prospectCoords(d); return pt ? pt[0] : -9999; })
-    .attr("cy", d => { const pt = prospectCoords(d); return pt ? pt[1] : -9999; })
+    .attr("cx", d => { const pt = projection([d.lng, d.lat]); return pt ? pt[0] : -9999; })
+    .attr("cy", d => { const pt = projection([d.lng, d.lat]); return pt ? pt[1] : -9999; })
     .attr("r", d => baseR * (0.75 + (playerStars(d) || 0) * 0.06))
     .attr("fill", d => STAR_COLOR[playerStars(d)] || STAR_COLOR[0])
     .attr("opacity", 0.55)
@@ -1286,13 +1286,15 @@ function openAllProspectsPanel() {
 
   const yearNum = parseInt(selectedYear);
   const validYear = !isNaN(yearNum) && PIPELINE_YEARS.includes(yearNum);
+  const starsOk = p => (starFilter === 0 || playerStars(p) === starFilter) && !isCentroid(p);
   let players = (validYear
-    ? pipelinePlayers.filter(p => p.year === yearNum)
-    : pipelinePlayers.filter(p => PIPELINE_YEARS.includes(p.year))
+    ? pipelinePlayers.filter(p => p.year === yearNum && starsOk(p))
+    : pipelinePlayers.filter(p => PIPELINE_YEARS.includes(p.year) && starsOk(p))
   ).slice().sort((a, b) => (b.stars || 0) - (a.stars || 0));
 
+  const starLabel = starFilter === 0 ? "" : ` · ${"★".repeat(starFilter)}`;
   const yearLabel = validYear ? `${yearNum} Class` : "All Pipeline Years";
-  playersTitle.textContent = `Pipeline · ${players.length} prospects (${yearLabel})`;
+  playersTitle.textContent = `Pipeline${starLabel} · ${players.length} prospects (${yearLabel})`;
 
   playersList.innerHTML = renderProspectRows(players, true);
   wireProspectClicks(players);
@@ -1412,13 +1414,14 @@ function openPlayerArcs(player) {
       .select("circle.school-dot")
       .attr("class", isCommit ? "school-dot pm-committed" : "school-dot pm-lit");
 
-    // School abbreviation label — font-size kept screen-constant by zoom handler
+    // School abbreviation label — font-size and offset are screen-constant via zoom handler
     const k = d3.zoomTransform(svg.node()).k;
+    const dotR = dotRadius();
     const labelText = (s.abbreviation || sName.split(" ")[0]).slice(0, 6);
     arcGroup.append("text")
       .attr("class", "school-label")
       .attr("x", sPt[0])
-      .attr("y", sPt[1] - 5 / k)
+      .attr("y", sPt[1] - (dotR + 5) / k)
       .attr("data-sy", sPt[1])
       .attr("text-anchor", "middle")
       .attr("fill", isCommit ? starColor : "#8b949e")
@@ -1479,6 +1482,7 @@ function enterSchoolMode() {
 
   searchWrap.style.display = "";
   document.getElementById("arc-filter").classList.remove("hidden");
+  document.getElementById("star-filter").classList.add("hidden");
   hint.textContent = "Click a school dot or search to explore";
   legendPipeline.style.display = "none";
   legendLost.style.display = "none";
@@ -1516,14 +1520,13 @@ function enterPlayerMode() {
 
   searchWrap.style.display = "none";
   document.getElementById("arc-filter").classList.add("hidden");
+  document.getElementById("star-filter").classList.remove("hidden");
   schoolBar.classList.remove("visible");
   legendPipeline.style.display = "none";
   legendLost.style.display = "none";
   clearArcs();
 
-  // Make state paths interactive; disable entire school layer so nothing blocks state clicks
-  stateLayer.selectAll("path.state-hit")
-    .classed("pm-interactive", true);
+  // Disable school layer pointer events; state paths are already pointer-events:none
   schoolLayer.style("pointer-events", "none");
 
   // Dim school dots
@@ -1533,7 +1536,12 @@ function enterPlayerMode() {
   rebuildYearSelect();
   computeStateHeat(selectedYear);
 
-  hint.textContent = "Tap a state to filter · tap a prospect for their offers";
+  // Reset to 5★ default on every entry to player mode
+  starFilter = 5;
+  document.querySelectorAll("#star-filter .arc-filter-btn").forEach(b =>
+    b.classList.toggle("active", +b.dataset.stars === starFilter));
+
+  hint.textContent = "Tap a player dot to see their offers";
   // Auto-open panel with all prospects immediately
   openAllProspectsPanel();
 }
@@ -1741,26 +1749,7 @@ Promise.all([
     .attr("stroke", "none")
     .attr("stroke-width", 0)
     .attr("cursor", "default")
-    .on("click", (ev, d) => {
-      if (mode !== "player") return;
-      ev.stopPropagation();
-      openStatePanel(d.properties.name);
-    })
-    .on("touchend", (ev, d) => {
-      if (mode !== "player") return;
-      ev.preventDefault();
-      ev.stopPropagation();
-      openStatePanel(d.properties.name);
-    })
-    .on("mousemove", (ev, d) => {
-      if (mode !== "player") return;
-      const abbrev = STATE_NAME_TO_ABBREV[d.properties.name];
-      const count = stateHeat[abbrev]
-        ? pipelinePlayers.filter(p => p.hometown_state === abbrev && (parseInt(selectedYear) ? p.year === parseInt(selectedYear) : PIPELINE_YEARS.includes(p.year))).length
-        : 0;
-      if (count > 0) showTooltip(ev, `<strong>${d.properties.name}</strong><br>${count} recruit${count !== 1 ? "s" : ""}`);
-    })
-    .on("mouseleave", hideTooltip);
+    .attr("pointer-events", "none");
 
   // Draw school dots
   const schoolGroups = schoolLayer.selectAll("g.school-group")
@@ -1817,12 +1806,23 @@ Promise.all([
   document.getElementById("btn-school").addEventListener("click", enterSchoolMode);
   document.getElementById("btn-player").addEventListener("click", enterPlayerMode);
 
-  // Arc filter toggle
-  document.querySelectorAll(".arc-filter-btn").forEach(btn => {
+  // Arc filter toggle (school mode)
+  document.querySelectorAll("#arc-filter .arc-filter-btn").forEach(btn => {
     btn.addEventListener("click", () => {
       arcFilter = btn.dataset.filter;
-      document.querySelectorAll(".arc-filter-btn").forEach(b => b.classList.toggle("active", b.dataset.filter === arcFilter));
+      document.querySelectorAll("#arc-filter .arc-filter-btn").forEach(b =>
+        b.classList.toggle("active", b.dataset.filter === arcFilter));
       if (mode === "school" && selectedSchool) drawArcs(selectedSchool, selectedYear);
+    });
+  });
+
+  // Star filter toggle (player mode)
+  document.querySelectorAll("#star-filter .arc-filter-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      starFilter = +btn.dataset.stars;
+      document.querySelectorAll("#star-filter .arc-filter-btn").forEach(b =>
+        b.classList.toggle("active", +b.dataset.stars === starFilter));
+      if (mode === "player") openAllProspectsPanel();
     });
   });
 
@@ -1847,9 +1847,6 @@ Promise.all([
       selectedPlayer = null;
       clearArcs();
       applyPlayerModeDots("dimmed");
-      if (selectedState) openStatePanel(selectedState);
-      else openAllProspectsPanel();
-    } else if (selectedState) {
       openAllProspectsPanel();
     } else {
       playerBackStrip.classList.remove("visible");
@@ -1866,8 +1863,7 @@ Promise.all([
     selectedPlayer = null;
     clearArcs();
     applyPlayerModeDots("dimmed");
-    if (selectedState) openStatePanel(selectedState);
-    else openAllProspectsPanel();
+    openAllProspectsPanel();
   }, { passive: true });
 
   // Global click dismissal
