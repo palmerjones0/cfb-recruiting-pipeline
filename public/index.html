@@ -615,7 +615,7 @@
 
 <div id="map-container">
   <svg id="map"></svg>
-  <div id="version-tag">v1.5.1</div>
+  <div id="version-tag">v1.5.2</div>
 </div>
 
 <div id="tooltip"></div>
@@ -720,6 +720,42 @@ const PIPELINE_YEARS = [2026, 2027, 2028];
 const STAR_COLOR = { 5: "#d29922", 4: "#388bfd", 3: "#3fb950", 2: "#8b949e", 1: "#8b949e", 0: "#8b949e" };
 const STAR_CLASS = { 5: "stars-gold", 4: "stars-blue", 3: "stars-green", 2: "stars-gray", 1: "stars-gray", 0: "stars-gray" };
 
+// State centroid lat/lng — used to detect & jitter centroid-fallback prospect coords
+const STATE_CENTROIDS_LL = {
+  "AL":[32.7794,-86.8287],"AK":[64.4459,-153.0],"AZ":[34.2744,-111.6602],
+  "AR":[34.8938,-92.4426],"CA":[37.1841,-119.4696],"CO":[38.9972,-105.5478],
+  "CT":[41.6219,-72.7273],"DE":[38.9896,-75.505],"FL":[28.6305,-82.4497],
+  "GA":[32.6415,-83.4426],"HI":[20.2927,-156.3737],"ID":[44.3509,-114.613],
+  "IL":[40.0417,-89.1965],"IN":[39.8942,-86.2816],"IA":[42.0751,-93.496],
+  "KS":[38.4937,-98.3804],"KY":[37.5347,-85.3021],"LA":[31.0689,-91.9968],
+  "ME":[45.3695,-69.2428],"MD":[39.055,-76.7909],"MA":[42.2596,-71.8083],
+  "MI":[44.3467,-85.4102],"MN":[46.2807,-94.3053],"MS":[32.7364,-89.6678],
+  "MO":[38.3566,-92.458],"MT":[47.0527,-109.6333],"NE":[41.5378,-99.7951],
+  "NV":[39.3289,-116.6312],"NH":[43.6805,-71.5811],"NJ":[40.1907,-74.6728],
+  "NM":[34.4071,-106.1126],"NY":[42.9538,-75.5268],"NC":[35.5557,-79.3877],
+  "ND":[47.4501,-100.4659],"OH":[40.2862,-82.7937],"OK":[35.5889,-97.4943],
+  "OR":[43.9336,-120.5583],"PA":[40.8781,-77.7996],"RI":[41.6762,-71.5562],
+  "SC":[33.9169,-80.8964],"SD":[44.4443,-100.2263],"TN":[35.858,-86.3505],
+  "TX":[31.4757,-99.3312],"UT":[39.321,-111.0937],"VT":[44.0687,-72.6658],
+  "VA":[37.5215,-78.8537],"WA":[47.3826,-120.4472],"WV":[38.6409,-80.6227],
+  "WI":[44.6243,-89.9941],"WY":[42.9957,-107.5512],"DC":[38.9101,-77.0147],
+};
+
+// Return SVG [x,y] for a prospect; adds deterministic jitter if coordinates are a state centroid
+function prospectCoords(p) {
+  const c = STATE_CENTROIDS_LL[p.hometown_state];
+  let lat = p.lat, lng = p.lng;
+  if (c && Math.abs(lat - c[0]) < 0.01 && Math.abs(lng - c[1]) < 0.01) {
+    let h = 0;
+    const key = p.name + p.year;
+    for (let i = 0; i < key.length; i++) h = (Math.imul(h, 31) + key.charCodeAt(i)) | 0;
+    h = Math.abs(h);
+    lat  += ((h & 0xFFFF) / 0x10000 - 0.5) * 2.5;
+    lng  += (((h >>> 16) & 0xFFFF) / 0x10000 - 0.5) * 4.0;
+  }
+  return projection([lng, lat]);
+}
+
 // Derive stars from 247 composite rating when CFBD stars not available
 function playerStars(p) {
   if (p.stars) return p.stars;
@@ -813,6 +849,10 @@ const zoom = d3.zoom()
       const r = hitRadius() / k;
       schoolLayer.selectAll("circle.school-hit").attr("r", r);
     }
+    // Keep school labels a constant ~9px on screen regardless of zoom level
+    arcLayer.selectAll("text.school-label")
+      .style("font-size", `${9 / k}px`)
+      .attr("y", function() { return +this.dataset.sy - 5 / k; });
   });
 svg.call(zoom);
 svg.on("dblclick.zoom", null);
@@ -973,8 +1013,8 @@ function drawProspectDots(players) {
     .data(players.filter(p => p.lat && p.lng))
     .join("circle")
     .attr("class", "prospect-dot")
-    .attr("cx", d => { const pt = projection([d.lng, d.lat]); return pt ? pt[0] : -9999; })
-    .attr("cy", d => { const pt = projection([d.lng, d.lat]); return pt ? pt[1] : -9999; })
+    .attr("cx", d => { const pt = prospectCoords(d); return pt ? pt[0] : -9999; })
+    .attr("cy", d => { const pt = prospectCoords(d); return pt ? pt[1] : -9999; })
     .attr("r", d => baseR * (0.75 + (playerStars(d) || 0) * 0.06))
     .attr("fill", d => STAR_COLOR[playerStars(d)] || STAR_COLOR[0])
     .attr("opacity", 0.55)
@@ -1263,6 +1303,7 @@ function openAllProspectsPanel() {
 // ── Player mode: state filter panel ──────────────────────
 function openStatePanel(stateName) {
   closeFeedback();
+  clearArcs();
   selectedState = stateName;
   selectedPlayer = null;
   playersTabs.style.display = "none";
@@ -1351,14 +1392,16 @@ function openPlayerArcs(player) {
     offerPts.push(sPt);
 
     const isCommit = sName === player.committed_to;
-    const color = isCommit ? "#d29922" : "#388bfd";
-    const strokeW = isCommit ? 1.5 : 1.0;
-    const opacity = isCommit ? 0.85 : 0.55;
+    const starColor = STAR_COLOR[playerStars(player)] || STAR_COLOR[0];
+    const color    = isCommit ? starColor : "#6e7681";
+    const strokeW  = isCommit ? 2.0 : 0.9;
+    const opacity  = isCommit ? 0.92 : 0.45;
+    const dash     = isCommit ? null : "4,5";
 
     const arc = drawAnimatedArc(arcGroup, homePt[0], homePt[1], sPt[0], sPt[1],
-      color, strokeW, opacity, null, i * 6);
+      color, strokeW, opacity, dash, i * 6);
     arc.on("mousemove", ev => {
-         showTooltip(ev, `<strong>${sName}</strong><br>${s.conference || ""}${isCommit ? "<br><span style='color:#d29922'>✓ Committed</span>" : ""}`);
+         showTooltip(ev, `<strong>${sName}</strong><br>${s.conference || ""}${isCommit ? "<br><span style='color:${starColor}'>✓ Committed</span>" : ""}`);
          moveTooltip(ev);
        })
        .on("mouseleave touchend", hideTooltip);
@@ -1368,16 +1411,33 @@ function openPlayerArcs(player) {
       .filter(d => d.id === s.id)
       .select("circle.school-dot")
       .attr("class", isCommit ? "school-dot pm-committed" : "school-dot pm-lit");
+
+    // School abbreviation label — font-size kept screen-constant by zoom handler
+    const k = d3.zoomTransform(svg.node()).k;
+    const labelText = (s.abbreviation || sName.split(" ")[0]).slice(0, 6);
+    arcGroup.append("text")
+      .attr("class", "school-label")
+      .attr("x", sPt[0])
+      .attr("y", sPt[1] - 5 / k)
+      .attr("data-sy", sPt[1])
+      .attr("text-anchor", "middle")
+      .attr("fill", isCommit ? starColor : "#8b949e")
+      .attr("font-weight", isCommit ? "600" : "400")
+      .style("font-size", `${9 / k}px`)
+      .attr("pointer-events", "none")
+      .text(labelText);
   });
 
-  // Hometown dot (prominent)
+  // Hometown dot (non-interactive so state paths behind it stay tappable)
   arcLayer.append("circle")
     .attr("cx", homePt[0]).attr("cy", homePt[1])
     .attr("r", 6).attr("fill", "#f0f6fc").attr("opacity", 0.9)
-    .attr("stroke", "#0d1117").attr("stroke-width", 1.5);
+    .attr("stroke", "#0d1117").attr("stroke-width", 1.5)
+    .attr("pointer-events", "none");
   arcLayer.append("circle")
     .attr("cx", homePt[0]).attr("cy", homePt[1])
-    .attr("r", 3).attr("fill", "#f0f6fc");
+    .attr("r", 3).attr("fill", "#f0f6fc")
+    .attr("pointer-events", "none");
 
   zoomToFit(offerPts);
 }
@@ -1779,8 +1839,9 @@ Promise.all([
     });
   });
 
-  // Player back button
-  document.getElementById("player-back-btn").addEventListener("click", ev => {
+  // Player back button — click + touchend so iOS Safari fires reliably
+  function handleBackBtn(ev) {
+    ev.preventDefault();
     ev.stopPropagation();
     if (selectedPlayer) {
       selectedPlayer = null;
@@ -1793,7 +1854,21 @@ Promise.all([
     } else {
       playerBackStrip.classList.remove("visible");
     }
-  });
+  }
+  document.getElementById("player-back-btn").addEventListener("click",    handleBackBtn);
+  document.getElementById("player-back-btn").addEventListener("touchend", handleBackBtn);
+
+  // Tap background map (outside panel) while a player arc view is open → go back
+  document.addEventListener("touchend", ev => {
+    if (mode !== "player" || !selectedPlayer) return;
+    if (playersPanel.contains(ev.target)) return;
+    if (document.getElementById("feedback-btn").contains(ev.target)) return;
+    selectedPlayer = null;
+    clearArcs();
+    applyPlayerModeDots("dimmed");
+    if (selectedState) openStatePanel(selectedState);
+    else openAllProspectsPanel();
+  }, { passive: true });
 
   // Global click dismissal
   document.addEventListener("click", ev => {
