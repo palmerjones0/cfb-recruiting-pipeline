@@ -227,15 +227,17 @@
     .school-group:hover .school-dot { fill: #8b949e; }
     .school-dot.selected { fill: #f0f6fc; stroke: #f0f6fc; }
     .school-dot.pm-dim { fill: #2a3039; stroke: #484f58; opacity: 0.5; }
-    .school-dot.pm-lit {
-      fill: #388bfd;
-      stroke: #58a6ff;
-      stroke-width: 1.5;
+    /* pm-offer: school offered but player didn't commit — visible grey, stands out from pm-dim */
+    .school-dot.pm-offer {
+      fill: #6e7681;
+      stroke: #8b949e;
+      stroke-width: 1.2;
+      opacity: 1;
     }
-    .school-dot.pm-committed {
-      fill: #d29922;
-      stroke: #e3b341;
-      stroke-width: 1.5;
+    /* pm-committed-dyn: committed school — fill/stroke set inline to player's star color */
+    .school-dot.pm-committed-dyn {
+      stroke-width: 1.8;
+      opacity: 1;
     }
     .school-hit { pointer-events: all; }
     .school-hit.pm-inactive { pointer-events: none; }
@@ -626,7 +628,7 @@
 
 <div id="map-container">
   <svg id="map"></svg>
-  <div id="version-tag">v1.5.6</div>
+  <div id="version-tag">v1.5.7</div>
 </div>
 
 <div id="tooltip"></div>
@@ -873,10 +875,12 @@ svg.on("dblclick", () => svg.transition().duration(400).call(zoom.transform, d3.
 // Prospect dots call ev.stopPropagation() so tapping a dot does NOT trigger this.
 function clearPlayerView() {
   if (mode !== "player" || !selectedPlayer) return;
-  selectedPlayer = null;
-  clearArcs();
-  applyPlayerModeDots("dimmed");
-  openAllProspectsPanel();
+  selectedPlayer = null;  // guard against double-fire
+  animatedClearPlayer(() => {
+    clearArcs();
+    applyPlayerModeDots("dimmed");
+    openAllProspectsPanel();
+  });
 }
 svg.on("touchend.player-clear", clearPlayerView);
 svg.on("click.player-clear", clearPlayerView);
@@ -1426,11 +1430,13 @@ function openPlayerArcs(player) {
        })
        .on("mouseleave touchend", hideTooltip);
 
-    // Light up school dot
+    // Light up school dot — committed matches player's star color; offered is prominent grey
     schoolLayer.selectAll("g.school-group")
       .filter(d => d.id === s.id)
       .select("circle.school-dot")
-      .attr("class", isCommit ? "school-dot pm-committed" : "school-dot pm-lit");
+      .attr("class", isCommit ? "school-dot pm-committed-dyn" : "school-dot pm-offer")
+      .style("fill", isCommit ? starColor : null)
+      .style("stroke", isCommit ? starColor : null);
 
     // School abbreviation label — font-size and y-offset kept screen-constant via zoom handler.
     // y = sPt[1] - dotRadius() (SVG units, constant) - 4/k (screen-unit gap, shrinks in SVG as zoom increases)
@@ -1480,13 +1486,33 @@ function openPlayerArcs(player) {
   zoomToFit(offerPts);
 }
 
+// Reverse arc draw animation, then run callback (used before clearArcs)
+function animatedClearPlayer(callback) {
+  const arcs = arcLayer.selectAll("path.recruit-arc");
+  if (arcs.empty()) { callback(); return; }
+  const DURATION = 240;
+  // Fade labels and home-dot circles out quickly
+  arcLayer.selectAll("text, circle").transition().duration(DURATION * 0.6).style("opacity", 0);
+  // Retract each arc: reset to full-length dasharray then animate dashoffset 0→len
+  let pending = arcs.size();
+  arcs.each(function() {
+    const el = d3.select(this);
+    const len = this.getTotalLength();
+    el.style("stroke-dasharray", `${len} ${len}`)
+      .style("stroke-dashoffset", 0)
+      .transition().duration(DURATION).ease(d3.easeQuadIn)
+      .style("stroke-dashoffset", len)
+      .on("end", () => { if (--pending <= 0) callback(); });
+  });
+}
+
 function applyPlayerModeDots(state) {
+  const dots = schoolLayer.selectAll("circle.school-dot")
+    .style("fill", null).style("stroke", null);  // clear any inline color from arc view
   if (state === "dimmed") {
-    schoolLayer.selectAll("circle.school-dot")
-      .attr("class", "school-dot pm-dim");
+    dots.attr("class", "school-dot pm-dim");
   } else {
-    schoolLayer.selectAll("circle.school-dot")
-      .attr("class", "school-dot");
+    dots.attr("class", "school-dot");
   }
 }
 
@@ -1533,7 +1559,9 @@ function enterSchoolMode() {
   schoolLayer.selectAll("circle.school-hit")
     .classed("pm-inactive", false)
     .style("pointer-events", null);
-  schoolLayer.selectAll("circle.school-dot").attr("class", "school-dot");
+  schoolLayer.selectAll("circle.school-dot")
+    .attr("class", "school-dot")
+    .style("fill", null).style("stroke", null);
 
   // Rebuild year select for school mode
   rebuildYearSelect();
@@ -1888,9 +1916,11 @@ Promise.all([
     ev.stopPropagation();
     if (selectedPlayer) {
       selectedPlayer = null;
-      clearArcs();
-      applyPlayerModeDots("dimmed");
-      openAllProspectsPanel();
+      animatedClearPlayer(() => {
+        clearArcs();
+        applyPlayerModeDots("dimmed");
+        openAllProspectsPanel();
+      });
     } else {
       playerBackStrip.classList.remove("visible");
     }
