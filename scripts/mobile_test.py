@@ -119,12 +119,12 @@ def run():
         shot(page, "05_player_mode")
         ok("Player btn active",
            page.evaluate("document.getElementById('btn-player').classList.contains('active')"))
-        ok("Prospects panel opens",
-           page.evaluate("document.getElementById('players-panel').classList.contains('open')"))
+        # Player mode: no panel — dots appear directly on map, no bottom sheet
+        panel_closed = not page.evaluate(
+            "document.getElementById('players-panel').classList.contains('open')")
+        ok("No panel in player mode", panel_closed)
         prospect_dots = page.locator("circle.prospect-dot").count()
         ok("Prospect dots on map", prospect_dots > 100, f"{prospect_dots} dots")
-        title = page.locator("#players-title").text_content()
-        ok("Panel shows count", "prospects" in title, title)
 
         # ── 6. 2027 star colors (key regression check) ────────────
         print("\n6. 2027 star colors")
@@ -225,14 +225,69 @@ def run():
             page.locator("#player-back-btn").tap()
             time.sleep(0.8)
             shot(page, "09_all_prospects")
-            title2 = page.locator("#players-title").text_content()
-            ok("Back → all prospects panel", "Pipeline" in title2, title2)
-            panel_open = page.evaluate(
+            # Back strip hides, no panel opens — player mode just shows dots on map
+            back_hidden = not page.evaluate(
+                "document.getElementById('player-back-strip').classList.contains('visible')")
+            ok("Back strip hides after back", back_hidden)
+            panel_still_closed = not page.evaluate(
                 "document.getElementById('players-panel').classList.contains('open')")
-            ok("Panel reopens on back", panel_open)
+            ok("No panel after back (dots only)", panel_still_closed)
+            dots_after_back = page.locator("circle.prospect-dot").count()
+            ok("Prospect dots restored after back", dots_after_back > 0,
+               f"{dots_after_back} dots")
         else:
-            ok("Back → all prospects panel", False, "back strip not visible (step 8 skipped)")
-            ok("Panel reopens on back", False, "back strip not visible (step 8 skipped)")
+            ok("Back strip hides after back", False, "back strip not visible (step 8 skipped)")
+            ok("No panel after back (dots only)", False, "back strip not visible (step 8 skipped)")
+            ok("Prospect dots restored after back", False, "back strip not visible (step 8 skipped)")
+
+        # ── 9b. Tap-map-to-clear (tap dot → arcs → tap map → back to dots) ──
+        print("\n9b. Tap-map-to-clear")
+        dot_for_clear = page.evaluate("""
+            () => {
+                const d = document.querySelector('circle.prospect-dot');
+                if (!d) return null;
+                const r = d.getBoundingClientRect();
+                return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+            }
+        """)
+        if dot_for_clear:
+            page.touchscreen.tap(dot_for_clear["x"], dot_for_clear["y"])
+            time.sleep(1.2)
+            arcs_before = page.locator("path.recruit-arc").count()
+            ok("Arcs shown after tap", arcs_before > 0, f"{arcs_before} arcs")
+            if arcs_before > 0:
+                # Now tap empty map area to clear — find a point with no dot
+                clear_pt = page.evaluate("""
+                    () => {
+                        const svg = document.getElementById('map');
+                        const w = svg.clientWidth, h = svg.clientHeight;
+                        // Try corners/edges away from dots
+                        const candidates = [
+                            [0.05 * w, 0.5 * h], [0.95 * w, 0.5 * h],
+                            [0.5 * w, 0.05 * h], [0.1 * w, 0.1 * h],
+                        ];
+                        for (const [x, y] of candidates) {
+                            const el = document.elementFromPoint(x, y);
+                            if (el && !el.classList.contains('prospect-dot') &&
+                                !el.classList.contains('school-hit')) {
+                                return { x, y };
+                            }
+                        }
+                        return { x: 0.05 * w, y: 0.5 * h };
+                    }
+                """)
+                page.touchscreen.tap(clear_pt["x"], clear_pt["y"])
+                time.sleep(0.8)
+                shot(page, "09b_tap_clear")
+                arcs_after = page.locator("path.recruit-arc").count()
+                ok("Tap map clears arcs", arcs_after == 0, f"{arcs_after} arcs remaining")
+                back_gone = not page.evaluate(
+                    "document.getElementById('player-back-strip').classList.contains('visible')")
+                ok("Back strip hides after map tap", back_gone)
+        else:
+            ok("Arcs shown after tap", False, "no dot found")
+            ok("Tap map clears arcs", False, "no dot found")
+            ok("Back strip hides after map tap", False, "no dot found")
 
         # ── 10. Tap prospect dot directly on map ───────────────────
         print("\n10. Tap prospect dot on map")
