@@ -622,7 +622,7 @@
 
 <div id="map-container">
   <svg id="map"></svg>
-  <div id="version-tag">v1.5.3</div>
+  <div id="version-tag">v1.5.4</div>
 </div>
 
 <div id="tooltip"></div>
@@ -848,15 +848,29 @@ const zoom = d3.zoom()
       const r = hitRadius() / k;
       schoolLayer.selectAll("circle.school-hit").attr("r", r);
     }
-    // Keep school labels a constant ~9px on screen, offset above the dot at all zoom levels
+    // Keep labels at constant screen size, offset by SVG-unit dotRadius + screen-constant gap
     const dotR = dotRadius();
     arcLayer.selectAll("text.school-label")
       .style("font-size", `${9 / k}px`)
-      .attr("y", function() { return +this.dataset.sy - (dotR + 5) / k; });
+      .attr("y", function() { return +this.dataset.sy - dotR - 4 / k; });
+    arcLayer.selectAll("text.player-hometown-label")
+      .style("font-size", `${10 / k}px`)
+      .attr("y", function() { return +this.dataset.hy + dotR + 4 / k; });
   });
 svg.call(zoom);
 svg.on("dblclick.zoom", null);
 svg.on("dblclick", () => svg.transition().duration(400).call(zoom.transform, d3.zoomIdentity));
+
+// Tap map background while player arc view is open → return to all prospects
+// Registered on SVG (not document) so iOS always delivers it, and stopPropagation
+// from prospect-dot/arc touchend handlers correctly prevents it from firing there.
+svg.on("touchend.player-clear", () => {
+  if (mode !== "player" || !selectedPlayer) return;
+  selectedPlayer = null;
+  clearArcs();
+  applyPlayerModeDots("dimmed");
+  openAllProspectsPanel();
+});
 
 // ── Sizing helpers ────────────────────────────────────────
 function getSize() { return [mapContainer.clientWidth, mapContainer.clientHeight]; }
@@ -1001,6 +1015,14 @@ function applyStateHeat() {
 function clearArcs() {
   arcLayer.remove();
   arcLayer = zoomLayer.insert("g", ".school-layer").attr("class", "arc-layer");
+  // In player mode, re-enforce school layer being non-interactive (openPlayerArcs may
+  // have re-enabled individual groups; clearArcs always returns them to disabled state).
+  if (mode === "player") {
+    schoolLayer.style("pointer-events", "none");
+    schoolLayer.selectAll("g.school-group")
+      .on("click.pa", null)
+      .on("touchend.pa", null);
+  }
 }
 
 // ── Prospect dots (player mode) ───────────────────────────
@@ -1026,7 +1048,7 @@ function drawProspectDots(players) {
       showTooltip(ev, `<strong>${d.name}</strong><br><span class="${STAR_CLASS[stars]}">${starStr}</span> ${d.position}<br>${d.hometown_city}, ${d.hometown_state}`);
       moveTooltip(ev);
     })
-    .on("mouseleave touchend", hideTooltip);
+    .on("mouseleave", hideTooltip);  // touchend is handled above for navigation; keep separate
 }
 
 function clearProspectDots() {
@@ -1339,6 +1361,7 @@ function openStatePanel(stateName) {
 
 // ── Player mode: player arc view ──────────────────────────
 function openPlayerArcs(player) {
+  hideTooltip();
   selectedPlayer = player;
   playersTabs.style.display = "none";
   playerBackStrip.classList.add("visible");
@@ -1414,14 +1437,15 @@ function openPlayerArcs(player) {
       .select("circle.school-dot")
       .attr("class", isCommit ? "school-dot pm-committed" : "school-dot pm-lit");
 
-    // School abbreviation label — font-size and offset are screen-constant via zoom handler
+    // School abbreviation label — font-size and y-offset kept screen-constant via zoom handler.
+    // y = sPt[1] - dotRadius() (SVG units, constant) - 4/k (screen-unit gap, shrinks in SVG as zoom increases)
     const k = d3.zoomTransform(svg.node()).k;
     const dotR = dotRadius();
     const labelText = (s.abbreviation || sName.split(" ")[0]).slice(0, 6);
     arcGroup.append("text")
       .attr("class", "school-label")
       .attr("x", sPt[0])
-      .attr("y", sPt[1] - (dotR + 5) / k)
+      .attr("y", sPt[1] - dotR - 4 / k)
       .attr("data-sy", sPt[1])
       .attr("text-anchor", "middle")
       .attr("fill", isCommit ? starColor : "#8b949e")
@@ -1441,6 +1465,22 @@ function openPlayerArcs(player) {
     .attr("cx", homePt[0]).attr("cy", homePt[1])
     .attr("r", 3).attr("fill", "#f0f6fc")
     .attr("pointer-events", "none");
+
+  // Player name label anchored to arcLayer — moves with the map on pan/zoom
+  const k0 = d3.zoomTransform(svg.node()).k;
+  const dotR0 = dotRadius();
+  arcLayer.append("text")
+    .attr("class", "player-hometown-label")
+    .attr("x", homePt[0])
+    .attr("y", homePt[1] + dotR0 + 4 / k0)
+    .attr("data-hy", homePt[1])
+    .attr("text-anchor", "middle")
+    .attr("fill", "#f0f6fc")
+    .style("font-size", `${10 / k0}px`)
+    .style("font-weight", "600")
+    .style("text-shadow", "0 0 4px #0d1117, 0 0 4px #0d1117")
+    .attr("pointer-events", "none")
+    .text(player.name);
 
   zoomToFit(offerPts);
 }
@@ -1855,16 +1895,7 @@ Promise.all([
   document.getElementById("player-back-btn").addEventListener("click",    handleBackBtn);
   document.getElementById("player-back-btn").addEventListener("touchend", handleBackBtn);
 
-  // Tap background map (outside panel) while a player arc view is open → go back
-  document.addEventListener("touchend", ev => {
-    if (mode !== "player" || !selectedPlayer) return;
-    if (playersPanel.contains(ev.target)) return;
-    if (document.getElementById("feedback-btn").contains(ev.target)) return;
-    selectedPlayer = null;
-    clearArcs();
-    applyPlayerModeDots("dimmed");
-    openAllProspectsPanel();
-  }, { passive: true });
+  // Map background tap-to-clear is handled by svg.on("touchend.player-clear") above zoom setup.
 
   // Global click dismissal
   document.addEventListener("click", ev => {
