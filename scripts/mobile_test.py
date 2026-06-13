@@ -184,7 +184,7 @@ def run():
         tx_title = page.locator("#players-title").text_content()
         ok("Texas panel loads", "Texas" in tx_title, tx_title)
 
-        # ── 8. Tap a player row → player arcs ─────────────────────
+        # ── 8. Tap a player row → player arcs (panel closes, arcs on map) ────
         print("\n8. Tap player row → arcs")
         rows = page.locator(".player-row.tappable")
         nrows = rows.count()
@@ -192,13 +192,30 @@ def run():
         if nrows > 0:
             name = rows.first.locator(".player-name").text_content().strip()
             rows.first.tap()
-            time.sleep(1.2)
+            time.sleep(1.5)
             shot(page, "08_player_arcs")
             arcs2 = page.locator("path.recruit-arc").count()
             ok("Player arcs drawn", arcs2 > 0, f"{arcs2} arcs for {name}")
             back_vis = page.evaluate(
                 "document.getElementById('player-back-strip').classList.contains('visible')")
             ok("Back strip visible", back_vis)
+            # Panel should be CLOSED in arc view (school list no longer shown in panel)
+            panel_closed = not page.evaluate(
+                "document.getElementById('players-panel').classList.contains('open')")
+            ok("Panel closed in arc view", panel_closed)
+            # Schools must NOT be clickable in player mode (P0 regression)
+            school_hit_pev = page.evaluate("""
+                () => {
+                    const hits = [...document.querySelectorAll('circle.school-hit')];
+                    const active = hits.filter(h => {
+                        const style = window.getComputedStyle(h);
+                        return style.pointerEvents !== 'none';
+                    });
+                    return active.length;
+                }
+            """)
+            ok("Schools non-interactive in player mode", school_hit_pev == 0,
+               f"{school_hit_pev} school-hit circles still active")
 
         # ── 9. Back navigation ─────────────────────────────────────
         print("\n9. Back navigation")
@@ -207,17 +224,15 @@ def run():
         if back_vis2:
             page.locator("#player-back-btn").tap()
             time.sleep(0.8)
-            title2 = page.locator("#players-title").text_content()
-            ok("Back → Texas list", "Texas" in title2, title2)
-
-            page.locator("#player-back-btn").tap()
-            time.sleep(0.8)
             shot(page, "09_all_prospects")
-            title3 = page.locator("#players-title").text_content()
-            ok("Back → all prospects", "Pipeline" in title3, title3)
+            title2 = page.locator("#players-title").text_content()
+            ok("Back → all prospects panel", "Pipeline" in title2, title2)
+            panel_open = page.evaluate(
+                "document.getElementById('players-panel').classList.contains('open')")
+            ok("Panel reopens on back", panel_open)
         else:
-            ok("Back → Texas list", False, "back strip not visible (step 8 skipped)")
-            ok("Back → all prospects", False, "back strip not visible (step 8 skipped)")
+            ok("Back → all prospects panel", False, "back strip not visible (step 8 skipped)")
+            ok("Panel reopens on back", False, "back strip not visible (step 8 skipped)")
 
         # ── 10. Tap prospect dot directly on map ───────────────────
         print("\n10. Tap prospect dot on map")

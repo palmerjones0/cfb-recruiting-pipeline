@@ -622,7 +622,7 @@
 
 <div id="map-container">
   <svg id="map"></svg>
-  <div id="version-tag">v1.5.4</div>
+  <div id="version-tag">v1.5.5</div>
 </div>
 
 <div id="tooltip"></div>
@@ -1015,10 +1015,14 @@ function applyStateHeat() {
 function clearArcs() {
   arcLayer.remove();
   arcLayer = zoomLayer.insert("g", ".school-layer").attr("class", "arc-layer");
-  // In player mode, re-enforce school layer being non-interactive (openPlayerArcs may
-  // have re-enabled individual groups; clearArcs always returns them to disabled state).
+  // In player mode, explicitly disable school-hit circles on the elements themselves.
+  // pointer-events on the parent <g> does NOT stop SVG child circles that have
+  // pointer-events:all via CSS — SVG evaluates pointer-events per-element, not inherited.
   if (mode === "player") {
     schoolLayer.style("pointer-events", "none");
+    schoolLayer.selectAll("circle.school-hit")
+      .classed("pm-inactive", true)
+      .style("pointer-events", "none");
     schoolLayer.selectAll("g.school-group")
       .on("click.pa", null)
       .on("touchend.pa", null);
@@ -1365,6 +1369,8 @@ function openPlayerArcs(player) {
   selectedPlayer = player;
   playersTabs.style.display = "none";
   playerBackStrip.classList.add("visible");
+  // Close the list panel — the arcs on the map with labels are the display in arc view
+  playersPanel.classList.remove("open");
 
   const stars = player.stars || 0;
   const starStr = "★".repeat(stars) + "☆".repeat(Math.max(0, 5 - stars));
@@ -1375,26 +1381,6 @@ function openPlayerArcs(player) {
   const offeringSchoolNames = playerOffers[key] ?? [];
 
   clearProspectDots();
-
-  playersList.innerHTML = offeringSchoolNames.length === 0
-    ? `<div class="player-row"><span style="color:#8b949e;font-size:12px">No offer data available for this player.</span></div>`
-    : offeringSchoolNames.sort().map(sName => {
-      const s = schoolMap[sName];
-      const isCommit = sName === player.committed_to;
-      const conf = s?.conference ?? "";
-      const href = s?.slug_247 ? `https://247sports.com/college/${s.slug_247}/` : null;
-      const nameEl = href
-        ? `<a class="player-name" href="${href}" target="_blank" rel="noopener" style="${isCommit ? "color:#d29922" : ""}">${sName}</a>`
-        : `<span class="player-name" style="${isCommit ? "color:#d29922" : ""}">${sName}</span>`;
-      return `<div class="player-row" style="${isCommit ? "background:rgba(210,153,34,0.08)" : ""}">
-        <div class="player-star-dot" style="background:${isCommit ? "#d29922" : "#388bfd"}"></div>
-        <div class="player-name-pos">
-          ${nameEl}
-          <span class="player-pos">${conf}</span>
-        </div>
-        ${isCommit ? '<span class="player-commit">✓ Committed</span>' : ""}
-      </div>`;
-    }).join("");
 
   // Draw arcs on map
   clearArcs();
@@ -1535,6 +1521,9 @@ function enterSchoolMode() {
 
   // Restore school layer interactivity and visual state
   schoolLayer.style("pointer-events", null);
+  schoolLayer.selectAll("circle.school-hit")
+    .classed("pm-inactive", false)
+    .style("pointer-events", null);
   schoolLayer.selectAll("circle.school-dot").attr("class", "school-dot");
 
   // Rebuild year select for school mode
@@ -1566,8 +1555,13 @@ function enterPlayerMode() {
   legendLost.style.display = "none";
   clearArcs();
 
-  // Disable school layer pointer events; state paths are already pointer-events:none
+  // Disable school layer. Must target the hit circles directly — SVG does not inherit
+  // pointer-events from a parent <g>, so .school-hit { pointer-events: all } in CSS
+  // would still fire even when the parent has inline pointer-events:none.
   schoolLayer.style("pointer-events", "none");
+  schoolLayer.selectAll("circle.school-hit")
+    .classed("pm-inactive", true)
+    .style("pointer-events", "none");
 
   // Dim school dots
   applyPlayerModeDots("dimmed");
