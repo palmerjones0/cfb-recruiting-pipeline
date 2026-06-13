@@ -628,7 +628,7 @@
 
 <div id="map-container">
   <svg id="map"></svg>
-  <div id="version-tag">v1.5.7</div>
+  <div id="version-tag">v1.5.8</div>
 </div>
 
 <div id="tooltip"></div>
@@ -1486,23 +1486,35 @@ function openPlayerArcs(player) {
   zoomToFit(offerPts);
 }
 
-// Reverse arc draw animation, then run callback (used before clearArcs)
+// Reverse arc draw animation, then run callback (used before clearArcs).
+// Must interrupt() any in-flight draw-in transition before starting the retract,
+// and use styleTween with an explicit start value so D3 doesn't mis-read
+// mid-animation computed style as the interpolation start.
 function animatedClearPlayer(callback) {
   const arcs = arcLayer.selectAll("path.recruit-arc");
   if (arcs.empty()) { callback(); return; }
-  const DURATION = 240;
-  // Fade labels and home-dot circles out quickly
-  arcLayer.selectAll("text, circle").transition().duration(DURATION * 0.6).style("opacity", 0);
-  // Retract each arc: reset to full-length dasharray then animate dashoffset 0→len
+  const DURATION = 280;
+
+  // Fade labels and circles simultaneously
+  arcLayer.selectAll("text, circle").interrupt()
+    .transition().duration(DURATION * 0.55).style("opacity", 0);
+
   let pending = arcs.size();
+  function done() { if (--pending <= 0) callback(); }
+
   arcs.each(function() {
     const el = d3.select(this);
     const len = this.getTotalLength();
-    el.style("stroke-dasharray", `${len} ${len}`)
-      .style("stroke-dashoffset", 0)
-      .transition().duration(DURATION).ease(d3.easeQuadIn)
-      .style("stroke-dashoffset", len)
-      .on("end", () => { if (--pending <= 0) callback(); });
+    if (!len) { done(); return; }
+
+    el.interrupt();  // cancel any in-flight draw-in transition
+    el.style("stroke-dasharray", `${len} ${len}`);  // ensure full-length pattern
+
+    el.transition()
+      .duration(DURATION)
+      .ease(d3.easeQuadIn)
+      .styleTween("stroke-dashoffset", () => d3.interpolateNumber(0, len))
+      .on("end", done);
   });
 }
 
