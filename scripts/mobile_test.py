@@ -238,11 +238,85 @@ def run():
         else:
             ok("Prospect dot found", False, "no dot in viewport")
 
-        # ── 11. School mode cleanup ────────────────────────────────
-        print("\n11. School mode cleanup")
+        # ── 11. Zoom regression: label positioning ─────────────────
+        print("\n11. Zoom regression — label/dot offsets")
+        # School labels must be above their dot center in SVG space (y_label < y_dot_center).
+        # This validates the offset formula at whatever zoom zoomToFit chose.
+        label_check = page.evaluate("""
+            () => {
+                const labels = [...document.querySelectorAll('text.school-label')];
+                const bad = labels.filter(l => {
+                    const ly = parseFloat(l.getAttribute('y'));
+                    const sy = parseFloat(l.dataset.sy);
+                    return isNaN(ly) || isNaN(sy) || ly >= sy;  // label must be above dot center
+                });
+                return { total: labels.length, bad: bad.length };
+            }
+        """)
+        ok("School labels above dot centers",
+           label_check["bad"] == 0,
+           f"{label_check['total']} labels, {label_check['bad']} mispositioned")
+
+        # Player hometown label must be below its dot center (y_label > y_dot_center).
+        ht_label_check = page.evaluate("""
+            () => {
+                const labels = [...document.querySelectorAll('text.player-hometown-label')];
+                const bad = labels.filter(l => {
+                    const ly = parseFloat(l.getAttribute('y'));
+                    const hy = parseFloat(l.dataset.hy);
+                    return isNaN(ly) || isNaN(hy) || ly <= hy;  // label must be below dot center
+                });
+                return { total: labels.length, bad: bad.length };
+            }
+        """)
+        ok("Player hometown label below dot center",
+           ht_label_check["total"] > 0 and ht_label_check["bad"] == 0,
+           f"{ht_label_check['total']} label(s), {ht_label_check['bad']} mispositioned")
+
+        # Zoom to k=8 (near max), re-verify label positions hold
+        page.evaluate("""
+            () => {
+                const svgEl = document.getElementById('map');
+                const cur = d3.zoomTransform(svgEl);
+                const w = svgEl.clientWidth, h = svgEl.clientHeight;
+                // Scale around center
+                const k = 8;
+                d3.select(svgEl).call(
+                    d3.zoom().scaleExtent([1, 10]).transform,
+                    d3.zoomIdentity.translate(w/2 - k*w/2, h/2 - k*h/2).scale(k)
+                );
+            }
+        """)
+        time.sleep(0.8)
+        shot(page, "11_zoom_maxish")
+        label_check2 = page.evaluate("""
+            () => {
+                const labels = [...document.querySelectorAll('text.school-label')];
+                const bad = labels.filter(l => {
+                    const ly = parseFloat(l.getAttribute('y'));
+                    const sy = parseFloat(l.dataset.sy);
+                    return isNaN(ly) || isNaN(sy) || ly >= sy;
+                });
+                return { total: labels.length, bad: bad.length };
+            }
+        """)
+        ok("School labels above dots at k=8 zoom",
+           label_check2["bad"] == 0,
+           f"{label_check2['total']} labels, {label_check2['bad']} mispositioned")
+        # Reset zoom
+        page.evaluate("""
+            () => {
+                const svgEl = document.getElementById('map');
+                d3.select(svgEl).call(d3.zoom().scaleExtent([1,10]).transform, d3.zoomIdentity);
+            }
+        """)
+        time.sleep(0.5)
+
+        # ── 12. School mode cleanup ────────────────────────────────
+        print("\n12. School mode cleanup")
         page.locator("#btn-school").tap()
         time.sleep(0.8)
-        shot(page, "11_school_cleanup")
+        shot(page, "12_school_cleanup")
         remaining = page.locator("circle.prospect-dot").count()
         ok("Prospect dots cleared", remaining == 0, f"{remaining} remaining")
         xform = page.evaluate(
